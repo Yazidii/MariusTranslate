@@ -465,7 +465,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v3.2.1 - Model Download Button</div>
+            <div class="version">v3.3.0 - Smart Translation</div>
         </header>
 
         <div class="controls">
@@ -605,9 +605,13 @@
                 this.translator = null;
                 this.polishBuffer = '';
                 this.englishBuffer = '';
+                this.lastTranslatedText = '';
+                this.translationTimeout = null;
+                this.isTranslating = false;
                 
                 this.initUI();
                 this.checkAPIKey();
+                this.checkModelLoaded();
             }
 
             initUI() {
@@ -650,8 +654,6 @@
                 // Synchronized scrolling
                 this.polishText.addEventListener('scroll', (e) => this.syncScroll(e, 'polish'));
                 this.englishText.addEventListener('scroll', (e) => this.syncScroll(e, 'english'));
-                
-                console.log('Event listeners set up successfully');
             }
 
             checkAPIKey() {
@@ -690,7 +692,6 @@
             }
 
             async start() {
-                console.log('🎬 Start method called');
                 try {
                     if (!this.apiKey) {
                         this.showError('Please enter and save your API key first');
@@ -705,7 +706,6 @@
                     const sampleRate = parseInt(this.sampleRateSelect.value);
 
                     // Generate temporary key
-                    console.log('🔑 Generating temporary key...');
                     const tempKeyResponse = await fetch('https://mp.speechmatics.com/v1/api_keys?type=rt', {
                         method: 'POST',
                         headers: {
@@ -721,10 +721,8 @@
 
                     const tempKeyData = await tempKeyResponse.json();
                     const temporaryKey = tempKeyData.key_value;
-                    console.log('✅ Temporary key generated');
 
                     // Get microphone access
-                    console.log('🎤 Requesting microphone access...');
                     this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
                         audio: {
                             echoCancellation: true,
@@ -732,7 +730,6 @@
                             autoGainControl: true
                         } 
                     });
-                    console.log('✅ Microphone access granted');
 
                     // Connect WebSocket
                     const regionEndpoints = {
@@ -741,13 +738,10 @@
                     };
                     
                     const wsUrl = `${regionEndpoints[region]}?jwt=${temporaryKey}`;
-                    console.log('🔌 Connecting to:', regionEndpoints[region]);
                     
                     this.ws = new WebSocket(wsUrl);
                     
                     this.ws.onopen = async () => {
-                        console.log('✅ WebSocket connected!');
-                        
                         // Send StartRecognition message
                         const startMessage = {
                             message: 'StartRecognition',
@@ -763,10 +757,7 @@
                             }
                         };
                         
-                        console.log('📤 Sending StartRecognition...');
                         this.ws.send(JSON.stringify(startMessage));
-                        
-                        // Start audio processing (async)
                         await this.startAudioProcessing(sampleRate);
                         
                         this.isRecording = true;
@@ -780,27 +771,23 @@
                     
                     this.ws.onmessage = (event) => {
                         const message = JSON.parse(event.data);
-                        console.log('📨 Received:', message.message);
                         
                         if (message.message === 'AddPartialTranscript') {
                             this.displayTranscript(message.metadata.transcript, false);
                         } else if (message.message === 'AddTranscript') {
                             this.displayTranscript(message.metadata.transcript, true);
-                        } else if (message.message === 'RecognitionStarted') {
-                            console.log('🎤 Recognition started!');
                         } else if (message.message === 'Error') {
-                            console.error('❌ Error:', message);
+                            console.error('Transcription error:', message.reason);
                             this.showError('Transcription error: ' + message.reason);
                         }
                     };
                     
                     this.ws.onerror = (error) => {
-                        console.error('❌ WebSocket error:', error);
+                        console.error('WebSocket error:', error);
                         this.showError('Connection error');
                     };
                     
                     this.ws.onclose = () => {
-                        console.log('🔌 WebSocket closed');
                         if (this.isRecording) {
                             this.stop();
                         }
@@ -872,8 +859,6 @@
                 const source = this.audioContext.createMediaStreamSource(this.mediaStream);
                 source.connect(this.processor);
                 this.processor.connect(this.audioContext.destination);
-                
-                console.log('🔊 AudioWorklet processing started');
             }
 
             displayTranscript(text, isFinal) {
@@ -911,7 +896,6 @@
             }
 
             stop() {
-                console.log('⏹ Stopping transcription...');
                 this.isRecording = false;
                 
                 if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -1013,7 +997,6 @@
             }
 
             async downloadModel() {
-                console.log('📥 Starting model download...');
                 this.downloadModelBtn.disabled = true;
                 this.modelStatus.textContent = 'Downloading...';
                 this.modelStatus.style.color = '#f59e0b';
@@ -1026,6 +1009,9 @@
                     this.downloadModelBtn.textContent = '✓ Model Loaded';
                     this.downloadModelBtn.style.background = '#10b981';
                     
+                    // Mark as loaded in localStorage
+                    localStorage.setItem('translation_model_loaded', 'true');
+                    
                 } catch (error) {
                     this.modelStatus.textContent = 'Failed';
                     this.modelStatus.style.color = '#ef4444';
@@ -1034,11 +1020,8 @@
             }
 
             async initTranslator() {
-                console.log('🔧 Initializing translator...');
-                
                 // If already loaded, return
                 if (this.translator) {
-                    console.log('✅ Translator already loaded');
                     return;
                 }
                 
@@ -1054,10 +1037,7 @@
                         throw new Error('Transformers.js failed to load');
                     }
                     
-                    console.log('📦 Loading NLLB-200 translation model (this may take a minute on first load)...');
-                    
                     // Create translation pipeline with NLLB-200 distilled model
-                    // Polish (pol_Latn) → English (eng_Latn)
                     const pipeline = await window.transformersPipeline(
                         'translation',
                         'Xenova/nllb-200-distilled-600M',
@@ -1066,16 +1046,11 @@
                             progress_callback: (progress) => {
                                 if (progress.status === 'progress') {
                                     const percent = progress.progress ? progress.progress.toFixed(1) : '0';
-                                    console.log(`📥 Downloading: ${progress.file} - ${percent}%`);
                                     this.modelStatus.textContent = `${percent}%`;
-                                } else if (progress.status === 'done') {
-                                    console.log(`✅ Downloaded: ${progress.file}`);
                                 }
                             }
                         }
                     );
-                    
-                    console.log('✅ NLLB-200 translator ready!');
                     
                     // Wrap the pipeline to use correct language codes
                     this.translator = {
@@ -1089,7 +1064,7 @@
                     };
                     
                 } catch (error) {
-                    console.error('❌ Translator initialization error:', error);
+                    console.error('Translator initialization error:', error);
                     throw error;
                 }
             }
@@ -1148,21 +1123,44 @@
                     span.textContent = text + ' ';
                     this.polishText.appendChild(span);
                     
-                    // Translate THE ENTIRE accumulated Polish text
-                    try {
-                        console.log('🌍 Translating entire text...');
-                        const fullTranslation = await this.translator.translate(this.polishBuffer.trim());
+                    // Check if we have new sentences to translate (split by periods)
+                    const sentences = this.polishBuffer.split(/\.\s+/).filter(s => s.trim());
+                    const lastSentence = sentences[sentences.length - 1] || '';
+                    
+                    // Only translate if:
+                    // 1. Text ends with period (complete sentence), OR
+                    // 2. We have significantly new text (more than 5 words different)
+                    const textToTranslate = this.polishBuffer.trim();
+                    const wordsAdded = this.countWords(textToTranslate) - this.countWords(this.lastTranslatedText);
+                    
+                    const shouldTranslate = textToTranslate.endsWith('.') || wordsAdded >= 5;
+                    
+                    if (shouldTranslate && textToTranslate !== this.lastTranslatedText) {
+                        // Debounce translation - max once per second
+                        if (this.translationTimeout) {
+                            clearTimeout(this.translationTimeout);
+                        }
                         
-                        // Replace entire English text with new translation
-                        this.englishText.textContent = '';
-                        const enSpan = document.createElement('span');
-                        enSpan.className = 'translation-final';
-                        enSpan.textContent = fullTranslation;
-                        this.englishText.appendChild(enSpan);
-                        
-                        console.log('✅ Translation complete');
-                    } catch (error) {
-                        console.error('Translation error:', error);
+                        this.translationTimeout = setTimeout(async () => {
+                            if (this.isTranslating) return;
+                            
+                            this.isTranslating = true;
+                            try {
+                                const fullTranslation = await this.translator.translate(textToTranslate);
+                                
+                                // Replace entire English text with new translation
+                                this.englishText.textContent = '';
+                                const enSpan = document.createElement('span');
+                                enSpan.className = 'translation-final';
+                                enSpan.textContent = fullTranslation;
+                                this.englishText.appendChild(enSpan);
+                                
+                                this.lastTranslatedText = textToTranslate;
+                            } catch (error) {
+                                console.error('Translation error:', error);
+                            }
+                            this.isTranslating = false;
+                        }, 1000); // 1 second debounce
                     }
                 } else {
                     // Show partial in grey (Polish only - don't translate partials)
@@ -1175,6 +1173,10 @@
                 // Auto-scroll both
                 this.polishText.scrollTop = this.polishText.scrollHeight;
                 this.englishText.scrollTop = this.englishText.scrollHeight;
+            }
+
+            countWords(text) {
+                return text.trim().split(/\s+/).filter(w => w.length > 0).length;
             }
 
             syncScroll(event, source) {
@@ -1195,13 +1197,11 @@
             }
 
             stopTranslation() {
-                console.log('⏹ Stopping translation...');
                 this.stop();
                 this.stopTranslateBtn.disabled = true;
             }
 
             exitTranslation() {
-                console.log('← Exiting translation mode...');
                 if (this.isRecording) {
                     this.stop();
                 }
@@ -1209,6 +1209,17 @@
                 this.isTranslationMode = false;
                 this.translationView.style.display = 'none';
                 document.querySelector('.container').style.display = 'block';
+            }
+            
+            checkModelLoaded() {
+                // Check if model was previously loaded
+                if (localStorage.getItem('translation_model_loaded') === 'true') {
+                    this.modelStatus.textContent = '✓ Ready!';
+                    this.modelStatus.style.color = '#10b981';
+                    this.downloadModelBtn.textContent = '✓ Model Loaded';
+                    this.downloadModelBtn.style.background = '#10b981';
+                    this.downloadModelBtn.disabled = true;
+                }
             }
         }
 
