@@ -423,7 +423,6 @@
                 <select id="region">
                     <option value="eu" selected>EU (Europe)</option>
                     <option value="us">US (United States)</option>
-                    <option value="au">AU (Australia)</option>
                 </select>
             </div>
             <div class="setting-group">
@@ -573,16 +572,16 @@
                         const language = this.languageSelect.value;
                         const sampleRate = parseInt(this.sampleRateSelect.value);
 
-                        // Map region to Speechmatics endpoint
+                        // Map region to Speechmatics Realtime endpoints (from official docs)
                         const regionEndpoints = {
-                            'eu': 'wss://eu2.rt.speechmatics.com/v2',
-                            'us': 'wss://us.rt.speechmatics.com/v2',
-                            'au': 'wss://au.rt.speechmatics.com/v2'
+                            'eu': 'wss://eu.rt.speechmatics.com/v2',
+                            'us': 'wss://us.rt.speechmatics.com/v2'
                         };
                         
                         const appUrl = regionEndpoints[region];
 
                         console.log('Creating Speechmatics client with config:', { region, language, sampleRate, appUrl });
+                        console.log('Using API key:', this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'NONE');
 
                         this.rtClient = new window.RealtimeClient({
                             apiKey: this.apiKey,
@@ -634,7 +633,7 @@
                         } else if (error.name === 'NotReadableError') {
                             errorMessage = 'Microphone is already in use by another application.';
                         } else if (error.message && error.message.includes('not_authorised')) {
-                            errorMessage = 'Authentication failed. Check your API key and make sure you selected the correct region (EU/US/AU) for your account.';
+                            errorMessage = 'Authentication failed. Please check:\n1. Your API key is correct and saved\n2. You selected the correct region (EU/US)\n3. Your API key has Realtime transcription enabled\n4. Your API key hasn\'t expired';
                         }
                         
                         this.showError(errorMessage);
