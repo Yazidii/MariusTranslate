@@ -383,7 +383,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v2.0.0 - Raw WebSocket (No SDK)</div>
+            <div class="version">v2.1.0 - AudioWorklet</div>
         </header>
 
         <div class="controls">
@@ -612,8 +612,8 @@
                         console.log('📤 Sending StartRecognition...');
                         this.ws.send(JSON.stringify(startMessage));
                         
-                        // Start audio processing
-                        this.startAudioProcessing(sampleRate);
+                        // Start audio processing (async)
+                        await this.startAudioProcessing(sampleRate);
                         
                         this.isRecording = true;
                         this.startBtn.disabled = true;
@@ -671,11 +671,70 @@
                 }
             }
 
-            startAudioProcessing(sampleRate) {
+            async startAudioProcessing(sampleRate) {
                 this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
-                const source = this.audioContext.createMediaStreamSource(this.mediaStream);
                 
-                // Use ScriptProcessorNode for compatibility
+                // Create AudioWorklet processor inline
+                const processorCode = `
+                    class AudioCaptureProcessor extends AudioWorkletProcessor {
+                        process(inputs, outputs, parameters) {
+                            const input = inputs[0];
+                            if (input && input[0]) {
+                                // Send audio data to main thread
+                                this.port.postMessage(input[0]);
+                            }
+                            return true;
+                        }
+                    }
+                    registerProcessor('audio-capture-processor', AudioCaptureProcessor);
+                `;
+                
+                // Create blob URL for the processor
+                const blob = new Blob([processorCode], { type: 'application/javascript' });
+                const processorUrl = URL.createObjectURL(blob);
+                
+                try {
+                    // Load the AudioWorklet
+                    await this.audioContext.audioWorklet.addModule(processorUrl);
+                    URL.revokeObjectURL(processorUrl);
+                    
+                    // Create AudioWorklet node
+                    this.processor = new AudioWorkletNode(this.audioContext, 'audio-capture-processor');
+                    
+                    // Handle messages from the processor
+                    this.processor.port.onmessage = (event) => {
+                        if (!this.isRecording || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                            return;
+                        }
+
+                        const audioData = event.data; // Float32Array
+                        
+                        // Convert Float32Array to base64
+                        const audioMessage = {
+                            message: 'AddAudio',
+                            seq_no: this.seqNo++,
+                            audio: this.float32ToBase64(audioData)
+                        };
+                        
+                        this.ws.send(JSON.stringify(audioMessage));
+                    };
+                    
+                    // Connect audio pipeline
+                    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+                    source.connect(this.processor);
+                    this.processor.connect(this.audioContext.destination);
+                    
+                    console.log('🔊 AudioWorklet processing started');
+                } catch (error) {
+                    console.error('AudioWorklet not supported, falling back to ScriptProcessor:', error);
+                    // Fallback to ScriptProcessorNode if AudioWorklet not supported
+                    this.startAudioProcessingFallback(sampleRate);
+                }
+            }
+
+            startAudioProcessingFallback(sampleRate) {
+                // Fallback for browsers that don't support AudioWorklet
+                const source = this.audioContext.createMediaStreamSource(this.mediaStream);
                 const bufferSize = 4096;
                 this.processor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
                 
@@ -685,12 +744,11 @@
                     }
 
                     const inputData = e.inputBuffer.getChannelData(0);
-                    const audioBytes = new Int8Array(inputData.buffer);
                     
                     const audioMessage = {
                         message: 'AddAudio',
                         seq_no: this.seqNo++,
-                        audio: this.arrayBufferToBase64(audioBytes.buffer)
+                        audio: this.float32ToBase64(inputData)
                     };
                     
                     this.ws.send(JSON.stringify(audioMessage));
@@ -698,10 +756,18 @@
 
                 source.connect(this.processor);
                 this.processor.connect(this.audioContext.destination);
-                console.log('🔊 Audio processing started');
+                console.log('🔊 ScriptProcessor (fallback) started');
             }
 
-            arrayBufferToBase64(buffer) {
+            float32ToBase64(float32Array) {
+                // Convert Float32Array to raw bytes (little-endian)
+                const buffer = new ArrayBuffer(float32Array.length * 4);
+                const view = new DataView(buffer);
+                for (let i = 0; i < float32Array.length; i++) {
+                    view.setFloat32(i * 4, float32Array[i], true); // true = little-endian
+                }
+                
+                // Convert to base64
                 let binary = '';
                 const bytes = new Uint8Array(buffer);
                 for (let i = 0; i < bytes.byteLength; i++) {
