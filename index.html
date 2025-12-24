@@ -383,7 +383,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v1.2.0 - 2024-12-24</div>
+            <div class="version">v1.2.1 - Debug Mode</div>
         </header>
 
         <div class="controls">
@@ -586,6 +586,7 @@
 
                         // Generate temporary key for security
                         console.log('Generating temporary key...');
+                        console.log('API Key (first 20 chars):', this.apiKey.substring(0, 20));
                         const tempKeyResponse = await fetch('https://mp.speechmatics.com/v1/api_keys?type=rt', {
                             method: 'POST',
                             headers: {
@@ -595,13 +596,27 @@
                             body: JSON.stringify({ ttl: 3600 }) // 1 hour
                         });
 
+                        console.log('Temp key response status:', tempKeyResponse.status);
+                        
                         if (!tempKeyResponse.ok) {
+                            const errorText = await tempKeyResponse.text();
+                            console.error('Failed to generate temporary key:', errorText);
                             throw new Error(`Failed to generate temporary key: ${tempKeyResponse.status} ${tempKeyResponse.statusText}`);
                         }
 
                         const tempKeyData = await tempKeyResponse.json();
                         const temporaryKey = tempKeyData.key_value;
                         console.log('Temporary key generated successfully');
+                        console.log('Temporary key (first 50 chars):', temporaryKey.substring(0, 50));
+                        
+                        // Decode JWT to see what's in it
+                        try {
+                            const jwtParts = temporaryKey.split('.');
+                            const payload = JSON.parse(atob(jwtParts[1]));
+                            console.log('JWT payload:', payload);
+                        } catch (e) {
+                            console.warn('Could not decode JWT:', e);
+                        }
 
                         // Map region to Speechmatics Realtime endpoints (from official docs)
                         const regionEndpoints = {
@@ -614,8 +629,10 @@
                         const appUrl = `${baseUrl}?jwt=${temporaryKey}`;
 
                         console.log('Creating Speechmatics client with config:', { region, language, sampleRate });
-
-                        this.rtClient = new window.RealtimeClient({
+                        console.log('Base WebSocket URL:', baseUrl);
+                        console.log('Full WebSocket URL (with jwt):', `${baseUrl}?jwt=${temporaryKey.substring(0, 50)}...`);
+                        
+                        const clientConfig = {
                             appUrl: appUrl,
                             transcriptionConfig: {
                                 language: language,
@@ -627,7 +644,11 @@
                                 encoding: 'pcm_f32le',
                                 sample_rate: sampleRate
                             }
-                        });
+                        };
+                        
+                        console.log('Client configuration:', JSON.stringify(clientConfig, null, 2).replace(temporaryKey, 'JWT_HIDDEN'));
+
+                        this.rtClient = new window.RealtimeClient(clientConfig);
 
                         this.setupEventListeners();
 
@@ -640,9 +661,13 @@
                             } 
                         });
 
-                        console.log('Microphone access granted, starting client...');
+                        console.log('Microphone access granted');
+                        console.log('Audio stream:', stream);
+                        console.log('Audio tracks:', stream.getAudioTracks());
+                        
+                        console.log('Starting Speechmatics client...');
                         await this.rtClient.start(stream);
-                        console.log('Client started successfully');
+                        console.log('✅ Client started successfully!');
 
                         this.isRecording = true;
                         this.startBtn.disabled = true;
@@ -676,32 +701,41 @@
                 }
 
                 setupEventListeners() {
+                    console.log('Setting up Speechmatics event listeners...');
+                    
                     this.rtClient.addEventListener('AddPartialTranscript', (message) => {
-                        console.log('Partial:', message);
+                        console.log('📝 Partial transcript:', message);
                         if (message.metadata?.transcript) {
                             this.displayTranscript(message.metadata.transcript, false);
                         }
                     });
 
                     this.rtClient.addEventListener('AddTranscript', (message) => {
-                        console.log('Final:', message);
+                        console.log('✅ Final transcript:', message);
                         if (message.metadata?.transcript) {
                             this.displayTranscript(message.metadata.transcript, true);
                         }
                     });
 
                     this.rtClient.addEventListener('RecognitionStarted', () => {
-                        console.log('Recognition started');
+                        console.log('🎤 Recognition started!');
                     });
 
                     this.rtClient.addEventListener('Error', (error) => {
-                        console.error('Transcription error:', error);
+                        console.error('❌ Transcription error:', error);
+                        console.error('Error details:', JSON.stringify(error, null, 2));
                         this.showError('Transcription error: ' + (error.reason || error.message || 'Unknown error'));
                     });
 
                     this.rtClient.addEventListener('EndOfTranscript', () => {
-                        console.log('End of transcript');
+                        console.log('🏁 End of transcript');
                     });
+                    
+                    this.rtClient.addEventListener('AudioAdded', () => {
+                        console.log('🔊 Audio added to buffer');
+                    });
+                    
+                    console.log('Event listeners configured');
                 }
 
                 displayTranscript(text, isFinal) {
