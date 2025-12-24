@@ -465,7 +465,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v3.6.0 - LibreTranslate API</div>
+            <div class="version">v3.7.1 - LibreTranslate Fixed</div>
         </header>
 
         <div class="controls">
@@ -511,9 +511,14 @@
         <div class="settings">
             <h3>Settings</h3>
             <div class="setting-group">
-                <label for="apiKey">API Key:</label>
+                <label for="apiKey">Speechmatics Key:</label>
                 <input type="password" id="apiKey" placeholder="Enter your Speechmatics API key">
                 <button id="saveApiKey" class="btn-small">Save</button>
+            </div>
+            <div class="setting-group">
+                <label for="translateApiKey">LibreTranslate Key:</label>
+                <input type="password" id="translateApiKey" placeholder="LibreTranslate API key (optional)">
+                <button id="saveTranslateKey" class="btn-small">Save</button>
             </div>
             <div class="setting-group">
                 <label for="region">Region:</label>
@@ -536,13 +541,6 @@
                     <option value="44100" selected>44.1 kHz</option>
                     <option value="48000">48 kHz</option>
                 </select>
-            </div>
-            <div class="setting-group" style="border-top: 2px solid #e5e7eb; padding-top: 15px; margin-top: 15px;">
-                <label>Translation Model:</label>
-                <button id="downloadModelBtn" class="btn-small" style="background: #8b5cf6;">
-                    📥 Download Model
-                </button>
-                <span id="modelStatus" style="color: #6b7280; font-size: 0.9rem;">Not loaded</span>
             </div>
         </div>
 
@@ -592,6 +590,7 @@
                 this.startTime = null;
                 this.durationInterval = null;
                 this.apiKey = null;
+                this.translateApiKey = null;
                 this.seqNo = 0;
                 this.isTranslationMode = false;
                 this.translationWorker = null;
@@ -605,7 +604,6 @@
                 
                 this.initUI();
                 this.checkAPIKey();
-                this.checkModelLoaded();
             }
 
             initUI() {
@@ -625,8 +623,8 @@
                 this.sampleRateSelect = document.getElementById('sampleRate');
                 this.apiKeyInput = document.getElementById('apiKey');
                 this.saveApiKeyBtn = document.getElementById('saveApiKey');
-                this.downloadModelBtn = document.getElementById('downloadModelBtn');
-                this.modelStatus = document.getElementById('modelStatus');
+                this.translateApiKeyInput = document.getElementById('translateApiKey');
+                this.saveTranslateKeyBtn = document.getElementById('saveTranslateKey');
                 
                 // Translation view elements
                 this.translationView = document.getElementById('translationView');
@@ -639,11 +637,11 @@
                 this.startBtn.addEventListener('click', () => this.start());
                 this.stopBtn.addEventListener('click', () => this.stop());
                 this.translateBtn.addEventListener('click', () => this.startTranslation());
-                this.downloadModelBtn.addEventListener('click', () => this.downloadModel());
                 this.exitTranslateBtn.addEventListener('click', () => this.exitTranslation());
                 this.stopTranslateBtn.addEventListener('click', () => this.stopTranslation());
                 this.clearBtn.addEventListener('click', () => this.clearTranscription());
                 this.saveApiKeyBtn.addEventListener('click', () => this.saveAPIKey());
+                this.saveTranslateKeyBtn.addEventListener('click', () => this.saveTranslateAPIKey());
                 
                 // Synchronized scrolling
                 this.polishText.addEventListener('scroll', (e) => this.syncScroll(e, 'polish'));
@@ -660,6 +658,13 @@
                     this.updateStatus('error', 'API key required');
                     this.showError('Please enter your Speechmatics API key in the settings below.');
                     this.startBtn.disabled = true;
+                }
+                
+                // Load translation API key
+                const savedTranslateKey = localStorage.getItem('libretranslate_api_key');
+                if (savedTranslateKey) {
+                    this.translateApiKey = savedTranslateKey;
+                    this.translateApiKeyInput.value = savedTranslateKey;
                 }
             }
 
@@ -682,6 +687,26 @@
                 setTimeout(() => {
                     this.saveApiKeyBtn.textContent = originalText;
                     this.saveApiKeyBtn.style.background = '';
+                }, 2000);
+            }
+
+            saveTranslateAPIKey() {
+                const key = this.translateApiKeyInput.value.trim();
+                if (!key) {
+                    this.showError('Please enter a valid LibreTranslate API key');
+                    return;
+                }
+                
+                localStorage.setItem('libretranslate_api_key', key);
+                this.translateApiKey = key;
+                this.hideError();
+                
+                const originalText = this.saveTranslateKeyBtn.textContent;
+                this.saveTranslateKeyBtn.textContent = '✓ Saved!';
+                this.saveTranslateKeyBtn.style.background = '#10b981';
+                setTimeout(() => {
+                    this.saveTranslateKeyBtn.textContent = originalText;
+                    this.saveTranslateKeyBtn.style.background = '';
                 }, 2000);
             }
 
@@ -1003,31 +1028,33 @@
 
             async translateText(text) {
                 try {
-                    // Use LibreTranslate public API (free, no API key needed)
+                    // Use LibreTranslate API with proper format
+                    const body = new FormData();
+                    body.append('q', text);
+                    body.append('source', 'pl');
+                    body.append('target', 'en');
+                    body.append('format', 'text');
+                    
+                    if (this.translateApiKey) {
+                        body.append('api_key', this.translateApiKey);
+                    }
+                    
                     const response = await fetch('https://libretranslate.com/translate', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            q: text,
-                            source: 'pl',
-                            target: 'en',
-                            format: 'text'
-                        })
+                        body: body
                     });
                     
                     if (!response.ok) {
-                        throw new Error(`Translation API error: ${response.status}`);
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || `API error: ${response.status}`);
                     }
                     
                     const data = await response.json();
                     return data.translatedText;
                     
                 } catch (error) {
-                    console.error('Translation API error:', error);
-                    // Fallback: return original text if translation fails
-                    return `[Translation failed] ${text}`;
+                    console.error('Translation error:', error);
+                    return `[Error: ${error.message}]`;
                 }
             }
 
@@ -1179,13 +1206,6 @@
                 document.querySelector('.container').style.display = 'block';
             }
             
-            checkModelLoaded() {
-                // Check if model was previously loaded (we'll still need to reinit the worker)
-                if (localStorage.getItem('translation_model_loaded') === 'true') {
-                    this.modelStatus.textContent = 'Click to reload';
-                    this.modelStatus.style.color = '#6b7280';
-                }
-            }
         }
 
         // Initialize when DOM is ready
