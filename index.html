@@ -465,7 +465,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v3.4.1 - Fixed Worker Module</div>
+            <div class="version">v3.5.0 - Segment-Based Translation</div>
         </header>
 
         <div class="controls">
@@ -597,7 +597,8 @@
                 this.translationWorker = null;
                 this.polishBuffer = '';
                 this.englishBuffer = '';
-                this.lastTranslatedText = '';
+                this.currentPolishSegment = '';
+                this.translatedSegments = []; // Store finalized translations
                 this.translationTimeout = null;
                 this.isTranslating = false;
                 this.modelReady = false;
@@ -972,10 +973,10 @@
                 
                 // Clear buffers
                 this.polishBuffer = '';
-                this.englishBuffer = '';
+                this.currentPolishSegment = '';
+                this.translatedSegments = [];
                 this.polishText.textContent = '';
                 this.englishText.textContent = '';
-                this.lastTranslatedText = '';
                 
                 this.translateStatusText.textContent = 'Ready';
                 
@@ -1128,17 +1129,17 @@
             }
 
             updateEnglishTranslation(translation) {
-                // Clear and show the FULL translation of ALL accumulated Polish text
+                // Add the translated segment to our collection
+                const cleanTranslation = this.cleanText(translation);
+                this.translatedSegments.push(cleanTranslation);
+                
+                // Display ALL translated segments
                 this.englishText.textContent = '';
+                const fullText = this.translatedSegments.join(' ');
                 const enSpan = document.createElement('span');
                 enSpan.className = 'translation-final';
-                enSpan.textContent = translation;
+                enSpan.textContent = fullText;
                 this.englishText.appendChild(enSpan);
-                
-                // Show word counts to verify we're translating everything
-                const polishWords = this.countWords(this.polishBuffer);
-                const englishWords = this.countWords(translation);
-                console.log(`📊 Translation updated: ${polishWords} PL words → ${englishWords} EN words`);
                 
                 this.englishText.scrollTop = this.englishText.scrollHeight;
             }
@@ -1181,6 +1182,9 @@
             }
 
             async updateTranslationView(text, isFinal) {
+                // Clean up text and fix punctuation spacing
+                text = this.cleanText(text);
+                
                 // Update Polish text
                 const existingPartial = this.polishText.querySelector('.translation-partial');
                 if (existingPartial) {
@@ -1188,8 +1192,7 @@
                 }
 
                 if (isFinal) {
-                    // Add final text to Polish buffer
-                    this.polishBuffer += text + ' ';
+                    this.currentPolishSegment += text + ' ';
                     
                     // Update Polish display
                     const span = document.createElement('span');
@@ -1197,20 +1200,9 @@
                     span.textContent = text + ' ';
                     this.polishText.appendChild(span);
                     
-                    // Check if we have new sentences to translate (split by periods)
-                    const sentences = this.polishBuffer.split(/\.\s+/).filter(s => s.trim());
-                    const lastSentence = sentences[sentences.length - 1] || '';
-                    
-                    // Only translate if:
-                    // 1. Text ends with period (complete sentence), OR
-                    // 2. We have significantly new text (more than 5 words different)
-                    const textToTranslate = this.polishBuffer.trim();
-                    const wordsAdded = this.countWords(textToTranslate) - this.countWords(this.lastTranslatedText);
-                    
-                    const shouldTranslate = textToTranslate.endsWith('.') || wordsAdded >= 5;
-                    
-                    if (shouldTranslate && textToTranslate !== this.lastTranslatedText) {
-                        // Debounce translation - max once per second
+                    // Check if sentence is complete (ends with period, !, ?)
+                    if (/[.!?]\s*$/.test(this.currentPolishSegment.trim())) {
+                        // Sentence is complete - translate it and lock it
                         if (this.translationTimeout) {
                             clearTimeout(this.translationTimeout);
                         }
@@ -1218,18 +1210,21 @@
                         this.translationTimeout = setTimeout(() => {
                             if (this.isTranslating || !this.modelReady) return;
                             
+                            const segmentToTranslate = this.currentPolishSegment.trim();
                             this.isTranslating = true;
-                            this.lastTranslatedText = textToTranslate;
                             
-                            // Send to worker (non-blocking!)
+                            // Send only the NEW segment to translate
                             this.translationWorker.postMessage({
                                 type: 'translate',
-                                text: textToTranslate
+                                text: segmentToTranslate
                             });
-                        }, 1000); // 1 second debounce
+                            
+                            // Reset current segment for next sentence
+                            this.currentPolishSegment = '';
+                        }, 500); // 500ms debounce
                     }
                 } else {
-                    // Show partial in grey (Polish only - don't translate partials)
+                    // Show partial in grey (Polish only)
                     const span = document.createElement('span');
                     span.className = 'translation-partial';
                     span.textContent = text + ' ';
@@ -1239,6 +1234,11 @@
                 // Auto-scroll both
                 this.polishText.scrollTop = this.polishText.scrollHeight;
                 this.englishText.scrollTop = this.englishText.scrollHeight;
+            }
+
+            cleanText(text) {
+                // Fix punctuation spacing: "word ." → "word."
+                return text.replace(/\s+([.,!?;:])/g, '$1').trim();
             }
 
             countWords(text) {
