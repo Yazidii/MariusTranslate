@@ -383,7 +383,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v1.2.4 - JWT as apiKey with appUrl</div>
+            <div class="version">v1.2.5 - Testing Raw WS</div>
         </header>
 
         <div class="controls">
@@ -620,7 +620,7 @@
 
                         // Map region to Speechmatics Realtime endpoints (from official docs)
                         const regionEndpoints = {
-                            'eu': 'wss://eu1.rt.speechmatics.com/v2',
+                            'eu': 'wss://eu.rt.speechmatics.com/v2',
                             'us': 'wss://us.rt.speechmatics.com/v2'
                         };
                         
@@ -672,6 +672,21 @@
                         console.log('Audio tracks:', stream.getAudioTracks());
                         
                         console.log('Starting Speechmatics client...');
+                        
+                        // TEST: Try raw WebSocket connection first to verify auth works
+                        console.log('🧪 TEST: Attempting raw WebSocket connection first...');
+                        const testWs = new WebSocket(`${baseUrl}?jwt=${temporaryKey}`);
+                        testWs.onopen = () => {
+                            console.log('✅ Raw WebSocket connected successfully! Auth works!');
+                            testWs.close();
+                        };
+                        testWs.onerror = (error) => {
+                            console.error('❌ Raw WebSocket error:', error);
+                        };
+                        testWs.onmessage = (event) => {
+                            console.log('📨 Raw WebSocket message:', event.data);
+                        };
+                        
                         await this.rtClient.start(stream);
                         console.log('✅ Client started successfully!');
 
