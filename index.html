@@ -465,7 +465,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v3.3.0 - Smart Translation</div>
+            <div class="version">v3.4.1 - Fixed Worker Module</div>
         </header>
 
         <div class="controls">
@@ -579,14 +579,6 @@
         </div>
     </div>
 
-    <!-- Load Transformers.js from CDN -->
-    <script type="module">
-        // Import Transformers.js
-        import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
-        window.transformersPipeline = pipeline;
-        console.log('✅ Transformers.js loaded');
-    </script>
-
     <script>
         console.log('🚀 Initializing Live Transcription - Raw WebSocket Version');
         
@@ -602,12 +594,13 @@
                 this.apiKey = null;
                 this.seqNo = 0;
                 this.isTranslationMode = false;
-                this.translator = null;
+                this.translationWorker = null;
                 this.polishBuffer = '';
                 this.englishBuffer = '';
                 this.lastTranslatedText = '';
                 this.translationTimeout = null;
                 this.isTranslating = false;
+                this.modelReady = false;
                 
                 this.initUI();
                 this.checkAPIKey();
@@ -967,9 +960,7 @@
             }
 
             async startTranslation() {
-                console.log('🌍 Starting translation mode...');
-                
-                if (!this.translator) {
+                if (!this.modelReady) {
                     this.showError('Please download the translation model first!');
                     return;
                 }
@@ -984,6 +975,7 @@
                 this.englishBuffer = '';
                 this.polishText.textContent = '';
                 this.englishText.textContent = '';
+                this.lastTranslatedText = '';
                 
                 this.translateStatusText.textContent = 'Ready';
                 
@@ -998,7 +990,7 @@
 
             async downloadModel() {
                 this.downloadModelBtn.disabled = true;
-                this.modelStatus.textContent = 'Downloading...';
+                this.modelStatus.textContent = 'Initializing...';
                 this.modelStatus.style.color = '#f59e0b';
                 
                 try {
@@ -1008,65 +1000,147 @@
                     this.modelStatus.style.color = '#10b981';
                     this.downloadModelBtn.textContent = '✓ Model Loaded';
                     this.downloadModelBtn.style.background = '#10b981';
+                    this.modelReady = true;
                     
-                    // Mark as loaded in localStorage
                     localStorage.setItem('translation_model_loaded', 'true');
                     
                 } catch (error) {
-                    this.modelStatus.textContent = 'Failed';
+                    this.modelStatus.textContent = 'Failed: ' + error.message;
                     this.modelStatus.style.color = '#ef4444';
                     this.downloadModelBtn.disabled = false;
                 }
             }
 
             async initTranslator() {
-                // If already loaded, return
-                if (this.translator) {
-                    return;
+                if (this.translationWorker) {
+                    return; // Already initialized
                 }
                 
-                try {
-                    // Wait for Transformers.js to be available
-                    let attempts = 0;
-                    while (!window.transformersPipeline && attempts < 50) {
-                        await new Promise(resolve => setTimeout(resolve, 100));
-                        attempts++;
-                    }
+                // Create Web Worker with inline code to prevent UI blocking
+                const workerCode = `
+                    // Web Worker for Translation
+                    let translator = null;
                     
-                    if (!window.transformersPipeline) {
-                        throw new Error('Transformers.js failed to load');
-                    }
-                    
-                    // Create translation pipeline with NLLB-200 distilled model
-                    const pipeline = await window.transformersPipeline(
-                        'translation',
-                        'Xenova/nllb-200-distilled-600M',
-                        {
-                            quantized: true,
-                            progress_callback: (progress) => {
-                                if (progress.status === 'progress') {
-                                    const percent = progress.progress ? progress.progress.toFixed(1) : '0';
-                                    this.modelStatus.textContent = `${percent}%`;
-                                }
+                    self.addEventListener('message', async (e) => {
+                        const { type, text } = e.data;
+                        
+                        if (type === 'init') {
+                            try {
+                                // Dynamically import Transformers.js
+                                const module = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
+                                
+                                // Initialize translation pipeline
+                                translator = await module.pipeline(
+                                    'translation',
+                                    'Xenova/nllb-200-distilled-600M',
+                                    {
+                                        quantized: true,
+                                        progress_callback: (progress) => {
+                                            if (progress.status === 'progress') {
+                                                self.postMessage({ 
+                                                    type: 'progress', 
+                                                    progress: progress.progress || 0,
+                                                    file: progress.file
+                                                });
+                                            }
+                                        }
+                                    }
+                                );
+                                
+                                self.postMessage({ type: 'ready' });
+                            } catch (error) {
+                                self.postMessage({ type: 'error', error: error.message });
+                            }
+                        } else if (type === 'translate') {
+                            try {
+                                const result = await translator(text, {
+                                    src_lang: 'pol_Latn',
+                                    tgt_lang: 'eng_Latn'
+                                });
+                                self.postMessage({ 
+                                    type: 'translation', 
+                                    translation: result[0].translation_text 
+                                });
+                            } catch (error) {
+                                self.postMessage({ type: 'error', error: error.message });
                             }
                         }
-                    );
+                    });
+                `;
+                
+                const blob = new Blob([workerCode], { type: 'application/javascript' });
+                const workerUrl = URL.createObjectURL(blob);
+                
+                this.translationWorker = new Worker(workerUrl, { type: 'module' });
+                
+                // Handle worker messages
+                this.translationWorker.onmessage = (e) => {
+                    const { type, progress, translation, error } = e.data;
                     
-                    // Wrap the pipeline to use correct language codes
-                    this.translator = {
-                        translate: async (text) => {
-                            const result = await pipeline(text, {
-                                src_lang: 'pol_Latn',  // Polish
-                                tgt_lang: 'eng_Latn'   // English
-                            });
-                            return result[0].translation_text;
+                    if (type === 'progress') {
+                        const percent = progress ? progress.toFixed(1) : '0';
+                        this.modelStatus.textContent = `${percent}%`;
+                    } else if (type === 'ready') {
+                        this.modelReady = true;
+                    } else if (type === 'translation') {
+                        this.updateEnglishTranslation(translation);
+                        this.isTranslating = false;
+                    } else if (type === 'error') {
+                        console.error('Worker error:', error);
+                        this.isTranslating = false;
+                    }
+                };
+                
+                // Initialize the worker
+                return new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => reject(new Error('Worker init timeout')), 120000); // 2 min
+                    
+                    this.translationWorker.onmessage = (e) => {
+                        if (e.data.type === 'progress') {
+                            const percent = e.data.progress ? e.data.progress.toFixed(1) : '0';
+                            this.modelStatus.textContent = `${percent}%`;
+                        } else if (e.data.type === 'ready') {
+                            clearTimeout(timeout);
+                            this.modelReady = true;
+                            
+                            // Restore normal message handler
+                            this.translationWorker.onmessage = (e) => {
+                                const { type, progress, translation, error } = e.data;
+                                
+                                if (type === 'translation') {
+                                    this.updateEnglishTranslation(translation);
+                                    this.isTranslating = false;
+                                } else if (type === 'error') {
+                                    console.error('Translation error:', error);
+                                    this.isTranslating = false;
+                                }
+                            };
+                            
+                            resolve();
+                        } else if (e.data.type === 'error') {
+                            clearTimeout(timeout);
+                            reject(new Error(e.data.error));
                         }
                     };
                     
-                } catch (error) {
-                    console.error('Translator initialization error:', error);
-                    throw error;
-                }
+                    this.translationWorker.postMessage({ type: 'init' });
+                });
+            }
+
+            updateEnglishTranslation(translation) {
+                // Clear and show the FULL translation of ALL accumulated Polish text
+                this.englishText.textContent = '';
+                const enSpan = document.createElement('span');
+                enSpan.className = 'translation-final';
+                enSpan.textContent = translation;
+                this.englishText.appendChild(enSpan);
+                
+                // Show word counts to verify we're translating everything
+                const polishWords = this.countWords(this.polishBuffer);
+                const englishWords = this.countWords(translation);
+                console.log(`📊 Translation updated: ${polishWords} PL words → ${englishWords} EN words`);
+                
+                this.englishText.scrollTop = this.englishText.scrollHeight;
             }
 
             async displayTranscript(text, isFinal) {
@@ -1141,25 +1215,17 @@
                             clearTimeout(this.translationTimeout);
                         }
                         
-                        this.translationTimeout = setTimeout(async () => {
-                            if (this.isTranslating) return;
+                        this.translationTimeout = setTimeout(() => {
+                            if (this.isTranslating || !this.modelReady) return;
                             
                             this.isTranslating = true;
-                            try {
-                                const fullTranslation = await this.translator.translate(textToTranslate);
-                                
-                                // Replace entire English text with new translation
-                                this.englishText.textContent = '';
-                                const enSpan = document.createElement('span');
-                                enSpan.className = 'translation-final';
-                                enSpan.textContent = fullTranslation;
-                                this.englishText.appendChild(enSpan);
-                                
-                                this.lastTranslatedText = textToTranslate;
-                            } catch (error) {
-                                console.error('Translation error:', error);
-                            }
-                            this.isTranslating = false;
+                            this.lastTranslatedText = textToTranslate;
+                            
+                            // Send to worker (non-blocking!)
+                            this.translationWorker.postMessage({
+                                type: 'translate',
+                                text: textToTranslate
+                            });
                         }, 1000); // 1 second debounce
                     }
                 } else {
@@ -1212,13 +1278,10 @@
             }
             
             checkModelLoaded() {
-                // Check if model was previously loaded
+                // Check if model was previously loaded (we'll still need to reinit the worker)
                 if (localStorage.getItem('translation_model_loaded') === 'true') {
-                    this.modelStatus.textContent = '✓ Ready!';
-                    this.modelStatus.style.color = '#10b981';
-                    this.downloadModelBtn.textContent = '✓ Model Loaded';
-                    this.downloadModelBtn.style.background = '#10b981';
-                    this.downloadModelBtn.disabled = true;
+                    this.modelStatus.textContent = 'Click to reload';
+                    this.modelStatus.style.color = '#6b7280';
                 }
             }
         }
