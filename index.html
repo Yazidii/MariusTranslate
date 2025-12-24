@@ -383,7 +383,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v2.1.1 - AudioWorklet Fixed</div>
+            <div class="version">v2.1.2 - Fixed Audio Copy</div>
         </header>
 
         <div class="controls">
@@ -707,7 +707,8 @@
                             return;
                         }
 
-                        const audioData = event.data; // Float32Array
+                        // Copy the Float32Array (the original is reused by the processor)
+                        const audioData = new Float32Array(event.data);
                         
                         // Convert Float32Array to base64
                         const audioMessage = {
