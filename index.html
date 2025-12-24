@@ -320,6 +320,95 @@
             font-weight: 500;
         }
 
+        /* Translation View Styles */
+        #translationView {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: white;
+            z-index: 1000;
+        }
+
+        .translation-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .translation-status {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: white;
+            font-weight: 600;
+        }
+
+        .translation-status .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: white;
+        }
+
+        .translation-status.recording .status-dot {
+            background: #ef4444;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .translation-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100% - 70px);
+            overflow: hidden;
+        }
+
+        .translation-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-label {
+            padding: 15px 20px;
+            background: #f3f4f6;
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: #374151;
+            border-bottom: 2px solid #e5e7eb;
+        }
+
+        .translation-text {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            font-size: 1.2rem;
+            line-height: 1.8;
+            color: #1f2937;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .translation-divider {
+            height: 3px;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 0 10px rgba(102, 126, 234, 0.5);
+        }
+
+        .translation-partial {
+            color: #9ca3af;
+        }
+
+        .translation-final {
+            color: #1f2937;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 20px;
@@ -376,7 +465,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v2.3.0 - Flowing Text</div>
+            <div class="version">v3.0.0 - Live Translation!</div>
         </header>
 
         <div class="controls">
@@ -385,6 +474,9 @@
             </button>
             <button id="stopBtn" class="btn btn-danger" disabled>
                 <span class="btn-icon">⏹</span> Stop Recording
+            </button>
+            <button id="translateBtn" class="btn btn-primary" style="background: #8b5cf6;">
+                <span class="btn-icon">🌍</span> Start Live Translation
             </button>
             <button id="clearBtn" class="btn btn-secondary">
                 <span class="btn-icon">🗑</span> Clear
@@ -450,6 +542,36 @@
         <div id="errorMessage" class="error-message" style="display: none;"></div>
     </div>
 
+    <!-- Translation View (Hidden by default) -->
+    <div id="translationView" style="display: none;">
+        <div class="translation-header">
+            <button id="exitTranslateBtn" class="btn btn-secondary">
+                <span class="btn-icon">←</span> Exit
+            </button>
+            <button id="stopTranslateBtn" class="btn btn-danger" disabled>
+                <span class="btn-icon">⏹</span> Stop
+            </button>
+            <div class="translation-status">
+                <span class="status-dot"></span>
+                <span id="translateStatusText">Ready</span>
+            </div>
+        </div>
+        
+        <div class="translation-container">
+            <div class="translation-panel polish-panel">
+                <div class="panel-label">🇵🇱 Polski (Source)</div>
+                <div id="polishText" class="translation-text"></div>
+            </div>
+            
+            <div class="translation-divider"></div>
+            
+            <div class="translation-panel english-panel">
+                <div class="panel-label">🇬🇧 English (Translation)</div>
+                <div id="englishText" class="translation-text"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         console.log('🚀 Initializing Live Transcription - Raw WebSocket Version');
         
@@ -464,6 +586,10 @@
                 this.durationInterval = null;
                 this.apiKey = null;
                 this.seqNo = 0;
+                this.isTranslationMode = false;
+                this.translator = null;
+                this.polishBuffer = '';
+                this.englishBuffer = '';
                 
                 this.initUI();
                 this.checkAPIKey();
@@ -474,6 +600,7 @@
                 this.startBtn = document.getElementById('startBtn');
                 this.stopBtn = document.getElementById('stopBtn');
                 this.clearBtn = document.getElementById('clearBtn');
+                this.translateBtn = document.getElementById('translateBtn');
                 this.transcriptionDiv = document.getElementById('transcription');
                 this.statusIndicator = document.getElementById('statusIndicator');
                 this.statusText = document.getElementById('statusText');
@@ -485,11 +612,27 @@
                 this.sampleRateSelect = document.getElementById('sampleRate');
                 this.apiKeyInput = document.getElementById('apiKey');
                 this.saveApiKeyBtn = document.getElementById('saveApiKey');
+                
+                // Translation view elements
+                this.translationView = document.getElementById('translationView');
+                this.exitTranslateBtn = document.getElementById('exitTranslateBtn');
+                this.stopTranslateBtn = document.getElementById('stopTranslateBtn');
+                this.translateStatusText = document.getElementById('translateStatusText');
+                this.polishText = document.getElementById('polishText');
+                this.englishText = document.getElementById('englishText');
 
                 this.startBtn.addEventListener('click', () => this.start());
                 this.stopBtn.addEventListener('click', () => this.stop());
+                this.translateBtn.addEventListener('click', () => this.startTranslation());
+                this.exitTranslateBtn.addEventListener('click', () => this.exitTranslation());
+                this.stopTranslateBtn.addEventListener('click', () => this.stopTranslation());
                 this.clearBtn.addEventListener('click', () => this.clearTranscription());
                 this.saveApiKeyBtn.addEventListener('click', () => this.saveAPIKey());
+                
+                // Synchronized scrolling
+                this.polishText.addEventListener('scroll', (e) => this.syncScroll(e, 'polish'));
+                this.englishText.addEventListener('scroll', (e) => this.syncScroll(e, 'english'));
+                
                 console.log('Event listeners set up successfully');
             }
 
@@ -819,6 +962,187 @@
 
             hideError() {
                 this.errorDiv.style.display = 'none';
+            }
+
+            async startTranslation() {
+                console.log('🌍 Starting translation mode...');
+                
+                // Switch to translation view
+                document.querySelector('.container').style.display = 'none';
+                this.translationView.style.display = 'block';
+                this.isTranslationMode = true;
+                
+                // Clear buffers
+                this.polishBuffer = '';
+                this.englishBuffer = '';
+                this.polishText.textContent = '';
+                this.englishText.textContent = '';
+                
+                // Initialize translator
+                await this.initTranslator();
+                
+                // Force language to Polish
+                this.languageSelect.value = 'pl';
+                
+                // Start recording
+                await this.start();
+                
+                this.stopTranslateBtn.disabled = false;
+            }
+
+            async initTranslator() {
+                console.log('🔧 Initializing translator...');
+                
+                try {
+                    // Try Chrome Built-in AI first
+                    if (window.translation && window.translation.canTranslate) {
+                        const canTranslate = await window.translation.canTranslate({
+                            sourceLanguage: 'pl',
+                            targetLanguage: 'en'
+                        });
+                        
+                        if (canTranslate === 'readily') {
+                            this.translator = await window.translation.createTranslator({
+                                sourceLanguage: 'pl',
+                                targetLanguage: 'en'
+                            });
+                            console.log('✅ Using Chrome Built-in AI translator');
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.log('Chrome AI not available, using fallback');
+                }
+                
+                // Fallback: Use a simple mock translator (you can integrate Transformers.js here)
+                this.translator = {
+                    translate: async (text) => {
+                        // Mock translation - in production, use Transformers.js or API
+                        console.log('⚠️ Using mock translator - integrate Transformers.js for real translation');
+                        return `[EN] ${text}`;
+                    }
+                };
+                console.log('✅ Using fallback translator');
+            }
+
+            async displayTranscript(text, isFinal) {
+                if (!text) return;
+
+                if (this.isTranslationMode) {
+                    // Translation mode - update both panels
+                    await this.updateTranslationView(text, isFinal);
+                } else {
+                    // Normal mode - single panel
+                    const placeholder = this.transcriptionDiv.querySelector('.placeholder');
+                    if (placeholder) {
+                        placeholder.remove();
+                        this.transcriptionDiv.textContent = '';
+                    }
+
+                    const existingPartial = this.transcriptionDiv.querySelector('.transcript-partial');
+                    if (existingPartial) {
+                        existingPartial.remove();
+                    }
+                    
+                    if (isFinal) {
+                        const span = document.createElement('span');
+                        span.className = 'transcript-final';
+                        span.textContent = text + ' ';
+                        this.transcriptionDiv.appendChild(span);
+                    } else {
+                        const span = document.createElement('span');
+                        span.className = 'transcript-partial';
+                        span.textContent = text + ' ';
+                        this.transcriptionDiv.appendChild(span);
+                    }
+
+                    if (this.autoScrollCheckbox.checked) {
+                        this.transcriptionDiv.scrollTop = this.transcriptionDiv.scrollHeight;
+                    }
+                }
+            }
+
+            async updateTranslationView(text, isFinal) {
+                // Update Polish text
+                const existingPartial = this.polishText.querySelector('.translation-partial');
+                if (existingPartial) {
+                    existingPartial.remove();
+                }
+
+                if (isFinal) {
+                    this.polishBuffer += text + ' ';
+                    const span = document.createElement('span');
+                    span.className = 'translation-final';
+                    span.textContent = text + ' ';
+                    this.polishText.appendChild(span);
+                    
+                    // Translate and update English
+                    try {
+                        const translation = await this.translator.translate(text);
+                        this.englishBuffer += translation + ' ';
+                        const enSpan = document.createElement('span');
+                        enSpan.className = 'translation-final';
+                        enSpan.textContent = translation + ' ';
+                        this.englishText.appendChild(enSpan);
+                    } catch (error) {
+                        console.error('Translation error:', error);
+                    }
+                } else {
+                    // Show partial in grey
+                    const span = document.createElement('span');
+                    span.className = 'translation-partial';
+                    span.textContent = text + ' ';
+                    this.polishText.appendChild(span);
+                    
+                    // Optionally translate partial too
+                    try {
+                        const translation = await this.translator.translate(text);
+                        const enSpan = document.createElement('span');
+                        enSpan.className = 'translation-partial';
+                        enSpan.textContent = translation + ' ';
+                        this.englishText.appendChild(enSpan);
+                    } catch (error) {
+                        console.error('Translation error:', error);
+                    }
+                }
+
+                // Auto-scroll both
+                this.polishText.scrollTop = this.polishText.scrollHeight;
+                this.englishText.scrollTop = this.englishText.scrollHeight;
+            }
+
+            syncScroll(event, source) {
+                // Prevent infinite loop
+                if (this.isScrolling) return;
+                this.isScrolling = true;
+                
+                const sourceEl = event.target;
+                const targetEl = source === 'polish' ? this.englishText : this.polishText;
+                
+                // Calculate scroll percentage
+                const scrollPercentage = sourceEl.scrollTop / (sourceEl.scrollHeight - sourceEl.clientHeight);
+                
+                // Apply to other panel
+                targetEl.scrollTop = scrollPercentage * (targetEl.scrollHeight - targetEl.clientHeight);
+                
+                setTimeout(() => { this.isScrolling = false; }, 10);
+            }
+
+            stopTranslation() {
+                console.log('⏹ Stopping translation...');
+                this.stop();
+                this.stopTranslateBtn.disabled = true;
+            }
+
+            exitTranslation() {
+                console.log('← Exiting translation mode...');
+                if (this.isRecording) {
+                    this.stop();
+                }
+                
+                this.isTranslationMode = false;
+                this.translationView.style.display = 'none';
+                document.querySelector('.container').style.display = 'block';
             }
         }
 
