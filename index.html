@@ -383,7 +383,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v1.2.3 - JWT Query Param Only</div>
+            <div class="version">v1.2.4 - JWT as apiKey with appUrl</div>
         </header>
 
         <div class="controls">
@@ -620,21 +620,21 @@
 
                         // Map region to Speechmatics Realtime endpoints (from official docs)
                         const regionEndpoints = {
-                            'eu': 'wss://eu.rt.speechmatics.com/v2',
+                            'eu': 'wss://eu1.rt.speechmatics.com/v2',
                             'us': 'wss://us.rt.speechmatics.com/v2'
                         };
                         
                         const baseUrl = regionEndpoints[region];
-                        // For browser-based transcription, JWT MUST be in query parameter (per docs)
-                        const appUrl = `${baseUrl}?jwt=${temporaryKey}`;
 
                         console.log('Creating Speechmatics client with config:', { region, language, sampleRate });
-                        console.log('Base WebSocket URL:', baseUrl);
-                        console.log('Full WebSocket URL (JWT in query):', `${baseUrl}?jwt=${temporaryKey.substring(0, 30)}...`);
+                        console.log('WebSocket URL:', baseUrl);
+                        console.log('Using temporary JWT (will be passed as apiKey)');
                         
-                        // Do NOT pass apiKey when using JWT in URL query parameter
+                        // Try passing JWT as apiKey WITH the appUrl specified
+                        // The SDK should handle adding it to the URL
                         const clientConfig = {
-                            appUrl: appUrl,
+                            apiKey: temporaryKey,
+                            appUrl: baseUrl,  // Base URL without JWT
                             transcriptionConfig: {
                                 language: language,
                                 enable_partials: true,
@@ -647,7 +647,12 @@
                             }
                         };
                         
-                        console.log('Client configuration:', clientConfig);
+                        console.log('Client configuration (apiKey is JWT):', {
+                            apiKey: 'JWT_TOKEN_HIDDEN',
+                            appUrl: clientConfig.appUrl,
+                            transcriptionConfig: clientConfig.transcriptionConfig,
+                            audioFormat: clientConfig.audioFormat
+                        });
 
                         this.rtClient = new window.RealtimeClient(clientConfig);
 
