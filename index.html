@@ -465,7 +465,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v3.7.1 - LibreTranslate Fixed</div>
+            <div class="version">v3.7.2 - Removed Model Check</div>
         </header>
 
         <div class="controls">
@@ -986,15 +986,11 @@
             }
 
             async startTranslation() {
-                if (!this.modelReady) {
-                    this.showError('Please download the translation model first!');
-                    return;
-                }
-                
                 // Switch to translation view
                 document.querySelector('.container').style.display = 'none';
                 this.translationView.style.display = 'block';
                 this.isTranslationMode = true;
+                this.modelReady = true; // API-based, always ready
                 
                 // Clear buffers
                 this.polishBuffer = '';
