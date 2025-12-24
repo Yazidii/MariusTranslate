@@ -597,12 +597,13 @@
                             'us': 'wss://us.rt.speechmatics.com/v2'
                         };
                         
-                        const appUrl = regionEndpoints[region];
+                        // For browser-based transcription, temporary key must be in query parameter
+                        const baseUrl = regionEndpoints[region];
+                        const appUrl = `${baseUrl}?jwt=${temporaryKey}`;
 
-                        console.log('Creating Speechmatics client with config:', { region, language, sampleRate, appUrl });
+                        console.log('Creating Speechmatics client with config:', { region, language, sampleRate });
 
                         this.rtClient = new window.RealtimeClient({
-                            apiKey: temporaryKey,
                             appUrl: appUrl,
                             transcriptionConfig: {
                                 language: language,
