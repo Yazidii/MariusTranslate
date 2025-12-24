@@ -465,7 +465,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v3.1.0 - Real Chrome AI Translation</div>
+            <div class="version">v3.2.1 - Model Download Button</div>
         </header>
 
         <div class="controls">
@@ -537,6 +537,13 @@
                     <option value="48000">48 kHz</option>
                 </select>
             </div>
+            <div class="setting-group" style="border-top: 2px solid #e5e7eb; padding-top: 15px; margin-top: 15px;">
+                <label>Translation Model:</label>
+                <button id="downloadModelBtn" class="btn-small" style="background: #8b5cf6;">
+                    📥 Download Model
+                </button>
+                <span id="modelStatus" style="color: #6b7280; font-size: 0.9rem;">Not loaded</span>
+            </div>
         </div>
 
         <div id="errorMessage" class="error-message" style="display: none;"></div>
@@ -571,6 +578,14 @@
             </div>
         </div>
     </div>
+
+    <!-- Load Transformers.js from CDN -->
+    <script type="module">
+        // Import Transformers.js
+        import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+        window.transformersPipeline = pipeline;
+        console.log('✅ Transformers.js loaded');
+    </script>
 
     <script>
         console.log('🚀 Initializing Live Transcription - Raw WebSocket Version');
@@ -612,6 +627,8 @@
                 this.sampleRateSelect = document.getElementById('sampleRate');
                 this.apiKeyInput = document.getElementById('apiKey');
                 this.saveApiKeyBtn = document.getElementById('saveApiKey');
+                this.downloadModelBtn = document.getElementById('downloadModelBtn');
+                this.modelStatus = document.getElementById('modelStatus');
                 
                 // Translation view elements
                 this.translationView = document.getElementById('translationView');
@@ -624,6 +641,7 @@
                 this.startBtn.addEventListener('click', () => this.start());
                 this.stopBtn.addEventListener('click', () => this.stop());
                 this.translateBtn.addEventListener('click', () => this.startTranslation());
+                this.downloadModelBtn.addEventListener('click', () => this.downloadModel());
                 this.exitTranslateBtn.addEventListener('click', () => this.exitTranslation());
                 this.stopTranslateBtn.addEventListener('click', () => this.stopTranslation());
                 this.clearBtn.addEventListener('click', () => this.clearTranscription());
@@ -967,6 +985,11 @@
             async startTranslation() {
                 console.log('🌍 Starting translation mode...');
                 
+                if (!this.translator) {
+                    this.showError('Please download the translation model first!');
+                    return;
+                }
+                
                 // Switch to translation view
                 document.querySelector('.container').style.display = 'none';
                 this.translationView.style.display = 'block';
@@ -978,8 +1001,7 @@
                 this.polishText.textContent = '';
                 this.englishText.textContent = '';
                 
-                // Initialize translator
-                await this.initTranslator();
+                this.translateStatusText.textContent = 'Ready';
                 
                 // Force language to Polish
                 this.languageSelect.value = 'pl';
@@ -990,50 +1012,86 @@
                 this.stopTranslateBtn.disabled = false;
             }
 
+            async downloadModel() {
+                console.log('📥 Starting model download...');
+                this.downloadModelBtn.disabled = true;
+                this.modelStatus.textContent = 'Downloading...';
+                this.modelStatus.style.color = '#f59e0b';
+                
+                try {
+                    await this.initTranslator();
+                    
+                    this.modelStatus.textContent = '✓ Ready!';
+                    this.modelStatus.style.color = '#10b981';
+                    this.downloadModelBtn.textContent = '✓ Model Loaded';
+                    this.downloadModelBtn.style.background = '#10b981';
+                    
+                } catch (error) {
+                    this.modelStatus.textContent = 'Failed';
+                    this.modelStatus.style.color = '#ef4444';
+                    this.downloadModelBtn.disabled = false;
+                }
+            }
+
             async initTranslator() {
                 console.log('🔧 Initializing translator...');
                 
-                try {
-                    // Try Chrome Built-in AI Translation API (Chrome 141+)
-                    if (window.translation && window.translation.createTranslator) {
-                        console.log('Checking translation availability...');
-                        
-                        // Check if we can translate
-                        const availability = await window.translation.canTranslate({
-                            sourceLanguage: 'pl',
-                            targetLanguage: 'en'
-                        });
-                        
-                        console.log('Translation availability:', availability);
-                        
-                        if (availability === 'no') {
-                            throw new Error('Translation not available for pl->en');
-                        }
-                        
-                        // Create translator (may download models)
-                        this.translator = await window.translation.createTranslator({
-                            sourceLanguage: 'pl',
-                            targetLanguage: 'en'
-                        });
-                        
-                        // If it needs to download, wait for it
-                        if (availability === 'after-download') {
-                            console.log('⏳ Downloading translation model...');
-                            this.translateStatusText.textContent = 'Downloading model...';
-                            // The createTranslator will handle the download
-                        }
-                        
-                        console.log('✅ Chrome Built-in AI translator ready!');
-                        this.translateStatusText.textContent = 'Ready';
-                        return;
-                    }
-                } catch (error) {
-                    console.error('❌ Chrome AI translator error:', error);
-                    this.showError('Translation not available. Chrome Built-in AI is required. Please use Chrome 141+ with translation enabled in chrome://flags');
-                    throw error;
+                // If already loaded, return
+                if (this.translator) {
+                    console.log('✅ Translator already loaded');
+                    return;
                 }
                 
-                throw new Error('Chrome Built-in AI translation not available');
+                try {
+                    // Wait for Transformers.js to be available
+                    let attempts = 0;
+                    while (!window.transformersPipeline && attempts < 50) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        attempts++;
+                    }
+                    
+                    if (!window.transformersPipeline) {
+                        throw new Error('Transformers.js failed to load');
+                    }
+                    
+                    console.log('📦 Loading NLLB-200 translation model (this may take a minute on first load)...');
+                    
+                    // Create translation pipeline with NLLB-200 distilled model
+                    // Polish (pol_Latn) → English (eng_Latn)
+                    const pipeline = await window.transformersPipeline(
+                        'translation',
+                        'Xenova/nllb-200-distilled-600M',
+                        {
+                            quantized: true,
+                            progress_callback: (progress) => {
+                                if (progress.status === 'progress') {
+                                    const percent = progress.progress ? progress.progress.toFixed(1) : '0';
+                                    console.log(`📥 Downloading: ${progress.file} - ${percent}%`);
+                                    this.modelStatus.textContent = `${percent}%`;
+                                } else if (progress.status === 'done') {
+                                    console.log(`✅ Downloaded: ${progress.file}`);
+                                }
+                            }
+                        }
+                    );
+                    
+                    console.log('✅ NLLB-200 translator ready!');
+                    
+                    // Wrap the pipeline to use correct language codes
+                    this.translator = {
+                        translate: async (text) => {
+                            const result = await pipeline(text, {
+                                src_lang: 'pol_Latn',  // Polish
+                                tgt_lang: 'eng_Latn'   // English
+                            });
+                            return result[0].translation_text;
+                        }
+                    };
+                    
+                } catch (error) {
+                    console.error('❌ Translator initialization error:', error);
+                    throw error;
+                }
             }
 
             async displayTranscript(text, isFinal) {
