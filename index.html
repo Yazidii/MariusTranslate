@@ -419,17 +419,18 @@
                 <button id="saveApiKey" class="btn-small">Save</button>
             </div>
             <div class="setting-group">
+                <label for="region">Region:</label>
+                <select id="region">
+                    <option value="eu" selected>EU (Europe)</option>
+                    <option value="us">US (United States)</option>
+                    <option value="au">AU (Australia)</option>
+                </select>
+            </div>
+            <div class="setting-group">
                 <label for="language">Language:</label>
                 <select id="language">
                     <option value="en">English</option>
-                    <option value="es">Spanish</option>
-                    <option value="fr">French</option>
-                    <option value="de">German</option>
-                    <option value="it">Italian</option>
-                    <option value="pt">Portuguese</option>
-                    <option value="nl">Dutch</option>
-                    <option value="ja">Japanese</option>
-                    <option value="zh">Chinese</option>
+                    <option value="pl">Polish</option>
                 </select>
             </div>
             <div class="setting-group">
@@ -486,6 +487,7 @@
                     this.durationSpan = document.getElementById('duration');
                     this.errorDiv = document.getElementById('errorMessage');
                     this.autoScrollCheckbox = document.getElementById('autoScroll');
+                    this.regionSelect = document.getElementById('region');
                     this.languageSelect = document.getElementById('language');
                     this.sampleRateSelect = document.getElementById('sampleRate');
                     this.apiKeyInput = document.getElementById('apiKey');
@@ -567,13 +569,24 @@
                         this.hideError();
                         this.updateStatus('connecting', 'Connecting...');
                         
+                        const region = this.regionSelect.value;
                         const language = this.languageSelect.value;
                         const sampleRate = parseInt(this.sampleRateSelect.value);
 
-                        console.log('Creating Speechmatics client with config:', { language, sampleRate });
+                        // Map region to Speechmatics endpoint
+                        const regionEndpoints = {
+                            'eu': 'wss://eu2.rt.speechmatics.com/v2',
+                            'us': 'wss://us.rt.speechmatics.com/v2',
+                            'au': 'wss://au.rt.speechmatics.com/v2'
+                        };
+                        
+                        const appUrl = regionEndpoints[region];
+
+                        console.log('Creating Speechmatics client with config:', { region, language, sampleRate, appUrl });
 
                         this.rtClient = new window.RealtimeClient({
                             apiKey: this.apiKey,
+                            appUrl: appUrl,
                             transcriptionConfig: {
                                 language: language,
                                 enable_partials: true,
@@ -620,6 +633,8 @@
                             errorMessage = 'Microphone access denied. Please allow microphone access and try again.';
                         } else if (error.name === 'NotReadableError') {
                             errorMessage = 'Microphone is already in use by another application.';
+                        } else if (error.message && error.message.includes('not_authorised')) {
+                            errorMessage = 'Authentication failed. Check your API key and make sure you selected the correct region (EU/US/AU) for your account.';
                         }
                         
                         this.showError(errorMessage);
