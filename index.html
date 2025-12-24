@@ -572,6 +572,25 @@
                         const language = this.languageSelect.value;
                         const sampleRate = parseInt(this.sampleRateSelect.value);
 
+                        // Generate temporary key for security
+                        console.log('Generating temporary key...');
+                        const tempKeyResponse = await fetch('https://mp.speechmatics.com/v1/api_keys?type=rt', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.apiKey}`
+                            },
+                            body: JSON.stringify({ ttl: 3600 }) // 1 hour
+                        });
+
+                        if (!tempKeyResponse.ok) {
+                            throw new Error(`Failed to generate temporary key: ${tempKeyResponse.status} ${tempKeyResponse.statusText}`);
+                        }
+
+                        const tempKeyData = await tempKeyResponse.json();
+                        const temporaryKey = tempKeyData.key_value;
+                        console.log('Temporary key generated successfully');
+
                         // Map region to Speechmatics Realtime endpoints (from official docs)
                         const regionEndpoints = {
                             'eu': 'wss://eu.rt.speechmatics.com/v2',
@@ -581,10 +600,9 @@
                         const appUrl = regionEndpoints[region];
 
                         console.log('Creating Speechmatics client with config:', { region, language, sampleRate, appUrl });
-                        console.log('Using API key:', this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'NONE');
 
                         this.rtClient = new window.RealtimeClient({
-                            apiKey: this.apiKey,
+                            apiKey: temporaryKey,
                             appUrl: appUrl,
                             transcriptionConfig: {
                                 language: language,
