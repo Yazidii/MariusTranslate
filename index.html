@@ -383,7 +383,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v2.1.2 - Fixed Audio Copy</div>
+            <div class="version">v2.2.1 - Clean AudioWorklet</div>
         </header>
 
         <div class="controls">
@@ -693,88 +693,33 @@
                 const blob = new Blob([processorCode], { type: 'application/javascript' });
                 const processorUrl = URL.createObjectURL(blob);
                 
-                try {
-                    // Load the AudioWorklet
-                    await this.audioContext.audioWorklet.addModule(processorUrl);
-                    URL.revokeObjectURL(processorUrl);
-                    
-                    // Create AudioWorklet node
-                    this.processor = new AudioWorkletNode(this.audioContext, 'audio-capture-processor');
-                    
-                    // Handle messages from the processor
-                    this.processor.port.onmessage = (event) => {
-                        if (!this.isRecording || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-                            return;
-                        }
-
-                        // Copy the Float32Array (the original is reused by the processor)
-                        const audioData = new Float32Array(event.data);
-                        
-                        // Convert Float32Array to base64
-                        const audioMessage = {
-                            message: 'AddAudio',
-                            seq_no: this.seqNo++,
-                            audio: this.float32ToBase64(audioData)
-                        };
-                        
-                        this.ws.send(JSON.stringify(audioMessage));
-                    };
-                    
-                    // Connect audio pipeline
-                    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
-                    source.connect(this.processor);
-                    this.processor.connect(this.audioContext.destination);
-                    
-                    console.log('🔊 AudioWorklet processing started');
-                } catch (error) {
-                    console.error('AudioWorklet not supported, falling back to ScriptProcessor:', error);
-                    // Fallback to ScriptProcessorNode if AudioWorklet not supported
-                    this.startAudioProcessingFallback(sampleRate);
-                }
-            }
-
-            startAudioProcessingFallback(sampleRate) {
-                // Fallback for browsers that don't support AudioWorklet
-                const source = this.audioContext.createMediaStreamSource(this.mediaStream);
-                const bufferSize = 4096;
-                this.processor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+                // Load the AudioWorklet
+                await this.audioContext.audioWorklet.addModule(processorUrl);
+                URL.revokeObjectURL(processorUrl);
                 
-                this.processor.onaudioprocess = (e) => {
+                // Create AudioWorklet node
+                this.processor = new AudioWorkletNode(this.audioContext, 'audio-capture-processor');
+                
+                // Handle messages from the processor
+                this.processor.port.onmessage = (event) => {
                     if (!this.isRecording || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
                         return;
                     }
 
-                    const inputData = e.inputBuffer.getChannelData(0);
+                    // Copy the Float32Array (the original is reused by the processor)
+                    const audioData = new Float32Array(event.data);
                     
-                    const audioMessage = {
-                        message: 'AddAudio',
-                        seq_no: this.seqNo++,
-                        audio: this.float32ToBase64(inputData)
-                    };
-                    
-                    this.ws.send(JSON.stringify(audioMessage));
+                    // Send raw binary audio data (not JSON!)
+                    // Speechmatics expects raw pcm_f32le bytes
+                    this.ws.send(audioData.buffer);
                 };
-
+                
+                // Connect audio pipeline
+                const source = this.audioContext.createMediaStreamSource(this.mediaStream);
                 source.connect(this.processor);
                 this.processor.connect(this.audioContext.destination);
-                console.log('🔊 ScriptProcessor (fallback) started');
-            }
-
-            float32ToBase64(float32Array) {
-                // Convert Float32Array to raw bytes (little-endian)
-                const buffer = new ArrayBuffer(float32Array.length * 4);
-                const view = new DataView(buffer);
-                for (let i = 0; i < float32Array.length; i++) {
-                    view.setFloat32(i * 4, float32Array[i], true); // true = little-endian
-                }
                 
-                // Convert to base64
-                let binary = '';
-                const bytes = new Uint8Array(buffer);
-                for (let i = 0; i < bytes.byteLength; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                }
-                return btoa(binary);
+                console.log('🔊 AudioWorklet processing started');
             }
 
             displayTranscript(text, isFinal) {
@@ -819,7 +764,7 @@
                 if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                     const endMessage = {
                         message: 'EndOfStream',
-                        last_seq_no: this.seqNo
+                        last_seq_no: 0
                     };
                     this.ws.send(JSON.stringify(endMessage));
                     setTimeout(() => this.ws.close(), 1000);
