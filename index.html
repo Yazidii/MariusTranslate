@@ -465,7 +465,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v3.0.0 - Live Translation!</div>
+            <div class="version">v3.1.0 - Real Chrome AI Translation</div>
         </header>
 
         <div class="controls">
@@ -994,35 +994,46 @@
                 console.log('🔧 Initializing translator...');
                 
                 try {
-                    // Try Chrome Built-in AI first
-                    if (window.translation && window.translation.canTranslate) {
-                        const canTranslate = await window.translation.canTranslate({
+                    // Try Chrome Built-in AI Translation API (Chrome 141+)
+                    if (window.translation && window.translation.createTranslator) {
+                        console.log('Checking translation availability...');
+                        
+                        // Check if we can translate
+                        const availability = await window.translation.canTranslate({
                             sourceLanguage: 'pl',
                             targetLanguage: 'en'
                         });
                         
-                        if (canTranslate === 'readily') {
-                            this.translator = await window.translation.createTranslator({
-                                sourceLanguage: 'pl',
-                                targetLanguage: 'en'
-                            });
-                            console.log('✅ Using Chrome Built-in AI translator');
-                            return;
+                        console.log('Translation availability:', availability);
+                        
+                        if (availability === 'no') {
+                            throw new Error('Translation not available for pl->en');
                         }
+                        
+                        // Create translator (may download models)
+                        this.translator = await window.translation.createTranslator({
+                            sourceLanguage: 'pl',
+                            targetLanguage: 'en'
+                        });
+                        
+                        // If it needs to download, wait for it
+                        if (availability === 'after-download') {
+                            console.log('⏳ Downloading translation model...');
+                            this.translateStatusText.textContent = 'Downloading model...';
+                            // The createTranslator will handle the download
+                        }
+                        
+                        console.log('✅ Chrome Built-in AI translator ready!');
+                        this.translateStatusText.textContent = 'Ready';
+                        return;
                     }
-                } catch (e) {
-                    console.log('Chrome AI not available, using fallback');
+                } catch (error) {
+                    console.error('❌ Chrome AI translator error:', error);
+                    this.showError('Translation not available. Chrome Built-in AI is required. Please use Chrome 141+ with translation enabled in chrome://flags');
+                    throw error;
                 }
                 
-                // Fallback: Use a simple mock translator (you can integrate Transformers.js here)
-                this.translator = {
-                    translate: async (text) => {
-                        // Mock translation - in production, use Transformers.js or API
-                        console.log('⚠️ Using mock translator - integrate Transformers.js for real translation');
-                        return `[EN] ${text}`;
-                    }
-                };
-                console.log('✅ Using fallback translator');
+                throw new Error('Chrome Built-in AI translation not available');
             }
 
             async displayTranscript(text, isFinal) {
@@ -1070,40 +1081,37 @@
                 }
 
                 if (isFinal) {
+                    // Add final text to Polish buffer
                     this.polishBuffer += text + ' ';
+                    
+                    // Update Polish display
                     const span = document.createElement('span');
                     span.className = 'translation-final';
                     span.textContent = text + ' ';
                     this.polishText.appendChild(span);
                     
-                    // Translate and update English
+                    // Translate THE ENTIRE accumulated Polish text
                     try {
-                        const translation = await this.translator.translate(text);
-                        this.englishBuffer += translation + ' ';
+                        console.log('🌍 Translating entire text...');
+                        const fullTranslation = await this.translator.translate(this.polishBuffer.trim());
+                        
+                        // Replace entire English text with new translation
+                        this.englishText.textContent = '';
                         const enSpan = document.createElement('span');
                         enSpan.className = 'translation-final';
-                        enSpan.textContent = translation + ' ';
+                        enSpan.textContent = fullTranslation;
                         this.englishText.appendChild(enSpan);
+                        
+                        console.log('✅ Translation complete');
                     } catch (error) {
                         console.error('Translation error:', error);
                     }
                 } else {
-                    // Show partial in grey
+                    // Show partial in grey (Polish only - don't translate partials)
                     const span = document.createElement('span');
                     span.className = 'translation-partial';
                     span.textContent = text + ' ';
                     this.polishText.appendChild(span);
-                    
-                    // Optionally translate partial too
-                    try {
-                        const translation = await this.translator.translate(text);
-                        const enSpan = document.createElement('span');
-                        enSpan.className = 'translation-partial';
-                        enSpan.textContent = translation + ' ';
-                        this.englishText.appendChild(enSpan);
-                    } catch (error) {
-                        console.error('Translation error:', error);
-                    }
                 }
 
                 // Auto-scroll both
