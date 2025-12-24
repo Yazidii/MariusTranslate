@@ -383,7 +383,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v1.2.1 - Debug Mode</div>
+            <div class="version">v1.2.3 - JWT Query Param Only</div>
         </header>
 
         <div class="controls">
@@ -624,14 +624,15 @@
                             'us': 'wss://us.rt.speechmatics.com/v2'
                         };
                         
-                        // For browser-based transcription, temporary key must be in query parameter
                         const baseUrl = regionEndpoints[region];
+                        // For browser-based transcription, JWT MUST be in query parameter (per docs)
                         const appUrl = `${baseUrl}?jwt=${temporaryKey}`;
 
                         console.log('Creating Speechmatics client with config:', { region, language, sampleRate });
                         console.log('Base WebSocket URL:', baseUrl);
-                        console.log('Full WebSocket URL (with jwt):', `${baseUrl}?jwt=${temporaryKey.substring(0, 50)}...`);
+                        console.log('Full WebSocket URL (JWT in query):', `${baseUrl}?jwt=${temporaryKey.substring(0, 30)}...`);
                         
+                        // Do NOT pass apiKey when using JWT in URL query parameter
                         const clientConfig = {
                             appUrl: appUrl,
                             transcriptionConfig: {
@@ -646,7 +647,7 @@
                             }
                         };
                         
-                        console.log('Client configuration:', JSON.stringify(clientConfig, null, 2).replace(temporaryKey, 'JWT_HIDDEN'));
+                        console.log('Client configuration:', clientConfig);
 
                         this.rtClient = new window.RealtimeClient(clientConfig);
 
