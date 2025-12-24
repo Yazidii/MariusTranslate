@@ -223,6 +223,8 @@
             font-size: 1.1rem;
             line-height: 1.8;
             color: #1f2937;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
 
         .transcription-content .placeholder {
@@ -230,21 +232,12 @@
             font-style: italic;
         }
 
-        .transcript-item {
-            margin-bottom: 10px;
-            padding: 8px 12px;
-            background: white;
-            border-radius: 6px;
-            border-left: 4px solid #667eea;
+        .transcript-partial {
+            color: #9ca3af;
         }
 
-        .transcript-item.final {
-            border-left-color: #10b981;
-        }
-
-        .transcript-item.partial {
-            opacity: 0.7;
-            border-left-color: #fbbf24;
+        .transcript-final {
+            color: #1f2937;
         }
 
         .settings {
@@ -383,7 +376,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v2.2.1 - Clean AudioWorklet</div>
+            <div class="version">v2.3.0 - Flowing Text</div>
         </header>
 
         <div class="controls">
@@ -728,28 +721,27 @@
                 const placeholder = this.transcriptionDiv.querySelector('.placeholder');
                 if (placeholder) {
                     placeholder.remove();
+                    this.transcriptionDiv.textContent = '';
                 }
 
-                const lastItem = this.transcriptionDiv.lastElementChild;
+                // Remove any existing partial text span
+                const existingPartial = this.transcriptionDiv.querySelector('.transcript-partial');
+                if (existingPartial) {
+                    existingPartial.remove();
+                }
                 
                 if (isFinal) {
-                    const item = document.createElement('div');
-                    item.className = 'transcript-item final';
-                    item.textContent = text;
-                    this.transcriptionDiv.appendChild(item);
-                    
-                    if (lastItem && lastItem.classList.contains('partial')) {
-                        lastItem.remove();
-                    }
+                    // Add final text to the accumulated text
+                    const span = document.createElement('span');
+                    span.className = 'transcript-final';
+                    span.textContent = text + ' ';
+                    this.transcriptionDiv.appendChild(span);
                 } else {
-                    if (lastItem && lastItem.classList.contains('partial')) {
-                        lastItem.textContent = text;
-                    } else {
-                        const item = document.createElement('div');
-                        item.className = 'transcript-item partial';
-                        item.textContent = text;
-                        this.transcriptionDiv.appendChild(item);
-                    }
+                    // Show partial text in grey
+                    const span = document.createElement('span');
+                    span.className = 'transcript-partial';
+                    span.textContent = text + ' ';
+                    this.transcriptionDiv.appendChild(span);
                 }
 
                 if (this.autoScrollCheckbox.checked) {
