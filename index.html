@@ -383,7 +383,7 @@
         <header>
             <h1>🎤 Live Transcription</h1>
             <p class="subtitle">Powered by Speechmatics</p>
-            <div class="version">v1.2.5 - Testing Raw WS</div>
+            <div class="version">v2.0.0 - Raw WebSocket (No SDK)</div>
         </header>
 
         <div class="controls">
@@ -457,239 +457,164 @@
         <div id="errorMessage" class="error-message" style="display: none;"></div>
     </div>
 
-    <!-- Load Speechmatics SDK from CDN -->
-    <script type="module">
-        console.log('Loading Speechmatics SDK...');
-        import { RealtimeClient } from 'https://cdn.jsdelivr.net/npm/@speechmatics/real-time-client@5.0.1/+esm';
-        window.RealtimeClient = RealtimeClient;
-        console.log('Speechmatics SDK loaded successfully');
+    <script>
+        console.log('🚀 Initializing Live Transcription - Raw WebSocket Version');
         
-        // Wait for DOM to be ready, then initialize app
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initApp);
-        } else {
-            initApp();
-        }
-        
-        function initApp() {
-            console.log('DOM ready, initializing app...');
-            
-            // Inline JavaScript for Live Transcription
-            class LiveTranscription {
-                constructor() {
-                    this.rtClient = null;
-                    this.isRecording = false;
-                    this.startTime = null;
-                    this.durationInterval = null;
-                    this.apiKey = null;
-                    
-                    this.initUI();
-                    this.checkAPIKey();
-                }
+        class LiveTranscription {
+            constructor() {
+                this.ws = null;
+                this.audioContext = null;
+                this.mediaStream = null;
+                this.processor = null;
+                this.isRecording = false;
+                this.startTime = null;
+                this.durationInterval = null;
+                this.apiKey = null;
+                this.seqNo = 0;
+                
+                this.initUI();
+                this.checkAPIKey();
+            }
 
-                initUI() {
-                    console.log('Initializing UI elements...');
-                    this.startBtn = document.getElementById('startBtn');
-                    this.stopBtn = document.getElementById('stopBtn');
-                    this.clearBtn = document.getElementById('clearBtn');
-                    this.transcriptionDiv = document.getElementById('transcription');
-                    this.statusIndicator = document.getElementById('statusIndicator');
-                    this.statusText = document.getElementById('statusText');
-                    this.durationSpan = document.getElementById('duration');
-                    this.errorDiv = document.getElementById('errorMessage');
-                    this.autoScrollCheckbox = document.getElementById('autoScroll');
-                    this.regionSelect = document.getElementById('region');
-                    this.languageSelect = document.getElementById('language');
-                    this.sampleRateSelect = document.getElementById('sampleRate');
-                    this.apiKeyInput = document.getElementById('apiKey');
-                    this.saveApiKeyBtn = document.getElementById('saveApiKey');
+            initUI() {
+                console.log('Initializing UI elements...');
+                this.startBtn = document.getElementById('startBtn');
+                this.stopBtn = document.getElementById('stopBtn');
+                this.clearBtn = document.getElementById('clearBtn');
+                this.transcriptionDiv = document.getElementById('transcription');
+                this.statusIndicator = document.getElementById('statusIndicator');
+                this.statusText = document.getElementById('statusText');
+                this.durationSpan = document.getElementById('duration');
+                this.errorDiv = document.getElementById('errorMessage');
+                this.autoScrollCheckbox = document.getElementById('autoScroll');
+                this.regionSelect = document.getElementById('region');
+                this.languageSelect = document.getElementById('language');
+                this.sampleRateSelect = document.getElementById('sampleRate');
+                this.apiKeyInput = document.getElementById('apiKey');
+                this.saveApiKeyBtn = document.getElementById('saveApiKey');
 
-                    if (!this.startBtn) {
-                        console.error('Start button not found!');
-                        return;
-                    }
+                this.startBtn.addEventListener('click', () => this.start());
+                this.stopBtn.addEventListener('click', () => this.stop());
+                this.clearBtn.addEventListener('click', () => this.clearTranscription());
+                this.saveApiKeyBtn.addEventListener('click', () => this.saveAPIKey());
+                console.log('Event listeners set up successfully');
+            }
 
-                    console.log('Setting up event listeners...');
-                    this.startBtn.addEventListener('click', () => {
-                        console.log('Start button clicked!');
-                        this.start();
-                    });
-                    this.stopBtn.addEventListener('click', () => this.stop());
-                    this.clearBtn.addEventListener('click', () => this.clearTranscription());
-                    this.saveApiKeyBtn.addEventListener('click', () => this.saveAPIKey());
-                    console.log('Event listeners set up successfully');
-                }
-
-                checkAPIKey() {
-                    // Check if we're on HTTPS or localhost
-                    const isSecure = window.location.protocol === 'https:' || 
-                                   window.location.hostname === 'localhost' || 
-                                   window.location.hostname === '127.0.0.1';
-                    
-                    if (!isSecure && window.location.protocol === 'file:') {
-                        this.showError('⚠️ Mobile browsers require HTTPS for microphone access. Please host this file on a web server or use a service like GitHub Pages. See README for instructions.');
-                        this.startBtn.disabled = true;
-                        this.updateStatus('error', 'HTTPS required');
-                        return;
-                    }
-                    
-                    const savedKey = localStorage.getItem('speechmatics_api_key');
-                    if (savedKey) {
-                        this.apiKey = savedKey;
-                        this.apiKeyInput.value = savedKey;
-                        this.updateStatus('ready', 'Ready');
-                    } else {
-                        this.updateStatus('error', 'API key required');
-                        this.showError('Please enter your Speechmatics API key in the settings below.');
-                        this.startBtn.disabled = true;
-                    }
-                }
-
-                saveAPIKey() {
-                    const key = this.apiKeyInput.value.trim();
-                    if (!key) {
-                        this.showError('Please enter a valid API key');
-                        return;
-                    }
-                    
-                    localStorage.setItem('speechmatics_api_key', key);
-                    this.apiKey = key;
-                    this.startBtn.disabled = false;
+            checkAPIKey() {
+                const savedKey = localStorage.getItem('speechmatics_api_key');
+                if (savedKey) {
+                    this.apiKey = savedKey;
+                    this.apiKeyInput.value = savedKey;
                     this.updateStatus('ready', 'Ready');
-                    this.hideError();
-                    
-                    const originalText = this.saveApiKeyBtn.textContent;
-                    this.saveApiKeyBtn.textContent = '✓ Saved!';
-                    this.saveApiKeyBtn.style.background = '#10b981';
-                    setTimeout(() => {
-                        this.saveApiKeyBtn.textContent = originalText;
-                        this.saveApiKeyBtn.style.background = '';
-                    }, 2000);
+                } else {
+                    this.updateStatus('error', 'API key required');
+                    this.showError('Please enter your Speechmatics API key in the settings below.');
+                    this.startBtn.disabled = true;
                 }
+            }
 
-                async start() {
-                    console.log('Start method called');
-                    try {
-                        if (!this.apiKey) {
-                            this.showError('Please enter and save your API key first');
-                            console.error('No API key found');
-                            return;
-                        }
+            saveAPIKey() {
+                const key = this.apiKeyInput.value.trim();
+                if (!key) {
+                    this.showError('Please enter a valid API key');
+                    return;
+                }
+                
+                localStorage.setItem('speechmatics_api_key', key);
+                this.apiKey = key;
+                this.startBtn.disabled = false;
+                this.updateStatus('ready', 'Ready');
+                this.hideError();
+                
+                const originalText = this.saveApiKeyBtn.textContent;
+                this.saveApiKeyBtn.textContent = '✓ Saved!';
+                this.saveApiKeyBtn.style.background = '#10b981';
+                setTimeout(() => {
+                    this.saveApiKeyBtn.textContent = originalText;
+                    this.saveApiKeyBtn.style.background = '';
+                }, 2000);
+            }
 
-                        console.log('Starting transcription...');
-                        this.hideError();
-                        this.updateStatus('connecting', 'Connecting...');
+            async start() {
+                console.log('🎬 Start method called');
+                try {
+                    if (!this.apiKey) {
+                        this.showError('Please enter and save your API key first');
+                        return;
+                    }
+
+                    this.hideError();
+                    this.updateStatus('connecting', 'Connecting...');
+                    
+                    const region = this.regionSelect.value;
+                    const language = this.languageSelect.value;
+                    const sampleRate = parseInt(this.sampleRateSelect.value);
+
+                    // Generate temporary key
+                    console.log('🔑 Generating temporary key...');
+                    const tempKeyResponse = await fetch('https://mp.speechmatics.com/v1/api_keys?type=rt', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${this.apiKey}`
+                        },
+                        body: JSON.stringify({ ttl: 3600 })
+                    });
+
+                    if (!tempKeyResponse.ok) {
+                        throw new Error(`Failed to generate temporary key: ${tempKeyResponse.status}`);
+                    }
+
+                    const tempKeyData = await tempKeyResponse.json();
+                    const temporaryKey = tempKeyData.key_value;
+                    console.log('✅ Temporary key generated');
+
+                    // Get microphone access
+                    console.log('🎤 Requesting microphone access...');
+                    this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        } 
+                    });
+                    console.log('✅ Microphone access granted');
+
+                    // Connect WebSocket
+                    const regionEndpoints = {
+                        'eu': 'wss://eu.rt.speechmatics.com/v2',
+                        'us': 'wss://us.rt.speechmatics.com/v2'
+                    };
+                    
+                    const wsUrl = `${regionEndpoints[region]}?jwt=${temporaryKey}`;
+                    console.log('🔌 Connecting to:', regionEndpoints[region]);
+                    
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onopen = () => {
+                        console.log('✅ WebSocket connected!');
                         
-                        const region = this.regionSelect.value;
-                        const language = this.languageSelect.value;
-                        const sampleRate = parseInt(this.sampleRateSelect.value);
-
-                        // Generate temporary key for security
-                        console.log('Generating temporary key...');
-                        console.log('API Key (first 20 chars):', this.apiKey.substring(0, 20));
-                        const tempKeyResponse = await fetch('https://mp.speechmatics.com/v1/api_keys?type=rt', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${this.apiKey}`
-                            },
-                            body: JSON.stringify({ ttl: 3600 }) // 1 hour
-                        });
-
-                        console.log('Temp key response status:', tempKeyResponse.status);
-                        
-                        if (!tempKeyResponse.ok) {
-                            const errorText = await tempKeyResponse.text();
-                            console.error('Failed to generate temporary key:', errorText);
-                            throw new Error(`Failed to generate temporary key: ${tempKeyResponse.status} ${tempKeyResponse.statusText}`);
-                        }
-
-                        const tempKeyData = await tempKeyResponse.json();
-                        const temporaryKey = tempKeyData.key_value;
-                        console.log('Temporary key generated successfully');
-                        console.log('Temporary key (first 50 chars):', temporaryKey.substring(0, 50));
-                        
-                        // Decode JWT to see what's in it
-                        try {
-                            const jwtParts = temporaryKey.split('.');
-                            const payload = JSON.parse(atob(jwtParts[1]));
-                            console.log('JWT payload:', payload);
-                        } catch (e) {
-                            console.warn('Could not decode JWT:', e);
-                        }
-
-                        // Map region to Speechmatics Realtime endpoints (from official docs)
-                        const regionEndpoints = {
-                            'eu': 'wss://eu.rt.speechmatics.com/v2',
-                            'us': 'wss://us.rt.speechmatics.com/v2'
-                        };
-                        
-                        const baseUrl = regionEndpoints[region];
-
-                        console.log('Creating Speechmatics client with config:', { region, language, sampleRate });
-                        console.log('WebSocket URL:', baseUrl);
-                        console.log('Using temporary JWT (will be passed as apiKey)');
-                        
-                        // Try passing JWT as apiKey WITH the appUrl specified
-                        // The SDK should handle adding it to the URL
-                        const clientConfig = {
-                            apiKey: temporaryKey,
-                            appUrl: baseUrl,  // Base URL without JWT
-                            transcriptionConfig: {
-                                language: language,
-                                enable_partials: true,
-                                max_delay: 2
-                            },
-                            audioFormat: {
+                        // Send StartRecognition message
+                        const startMessage = {
+                            message: 'StartRecognition',
+                            audio_format: {
                                 type: 'raw',
                                 encoding: 'pcm_f32le',
                                 sample_rate: sampleRate
+                            },
+                            transcription_config: {
+                                language: language,
+                                enable_partials: true,
+                                max_delay: 2
                             }
                         };
                         
-                        console.log('Client configuration (apiKey is JWT):', {
-                            apiKey: 'JWT_TOKEN_HIDDEN',
-                            appUrl: clientConfig.appUrl,
-                            transcriptionConfig: clientConfig.transcriptionConfig,
-                            audioFormat: clientConfig.audioFormat
-                        });
-
-                        this.rtClient = new window.RealtimeClient(clientConfig);
-
-                        this.setupEventListeners();
-
-                        console.log('Requesting microphone access...');
-                        const stream = await navigator.mediaDevices.getUserMedia({ 
-                            audio: {
-                                echoCancellation: true,
-                                noiseSuppression: true,
-                                autoGainControl: true
-                            } 
-                        });
-
-                        console.log('Microphone access granted');
-                        console.log('Audio stream:', stream);
-                        console.log('Audio tracks:', stream.getAudioTracks());
+                        console.log('📤 Sending StartRecognition...');
+                        this.ws.send(JSON.stringify(startMessage));
                         
-                        console.log('Starting Speechmatics client...');
+                        // Start audio processing
+                        this.startAudioProcessing(sampleRate);
                         
-                        // TEST: Try raw WebSocket connection first to verify auth works
-                        console.log('🧪 TEST: Attempting raw WebSocket connection first...');
-                        const testWs = new WebSocket(`${baseUrl}?jwt=${temporaryKey}`);
-                        testWs.onopen = () => {
-                            console.log('✅ Raw WebSocket connected successfully! Auth works!');
-                            testWs.close();
-                        };
-                        testWs.onerror = (error) => {
-                            console.error('❌ Raw WebSocket error:', error);
-                        };
-                        testWs.onmessage = (event) => {
-                            console.log('📨 Raw WebSocket message:', event.data);
-                        };
-                        
-                        await this.rtClient.start(stream);
-                        console.log('✅ Client started successfully!');
-
                         this.isRecording = true;
                         this.startBtn.disabled = true;
                         this.stopBtn.disabled = false;
@@ -697,159 +622,206 @@
                         
                         this.startTime = Date.now();
                         this.durationInterval = setInterval(() => this.updateDuration(), 1000);
-
-                    } catch (error) {
-                        console.error('Error starting transcription:', error);
-                        
-                        let errorMessage = 'Failed to start: ' + error.message;
-                        
-                        if (error.name === 'NotFoundError') {
-                            errorMessage = 'No microphone found. Please connect a microphone and try again.';
-                        } else if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-                            errorMessage = 'Microphone access denied. Please allow microphone access and try again.';
-                        } else if (error.name === 'NotReadableError') {
-                            errorMessage = 'Microphone is already in use by another application.';
-                        } else if (error.message && error.message.includes('not_authorised')) {
-                            errorMessage = 'Authentication failed. Please check:\n1. Your API key is correct and saved\n2. You selected the correct region (EU/US)\n3. Your API key has Realtime transcription enabled\n4. Your API key hasn\'t expired';
-                        }
-                        
-                        this.showError(errorMessage);
-                        this.cleanup();
-                        this.updateStatus('error', 'Error');
-                        this.startBtn.disabled = false;
-                        this.stopBtn.disabled = true;
-                    }
-                }
-
-                setupEventListeners() {
-                    console.log('Setting up Speechmatics event listeners...');
+                    };
                     
-                    this.rtClient.addEventListener('AddPartialTranscript', (message) => {
-                        console.log('📝 Partial transcript:', message);
-                        if (message.metadata?.transcript) {
+                    this.ws.onmessage = (event) => {
+                        const message = JSON.parse(event.data);
+                        console.log('📨 Received:', message.message);
+                        
+                        if (message.message === 'AddPartialTranscript') {
                             this.displayTranscript(message.metadata.transcript, false);
-                        }
-                    });
-
-                    this.rtClient.addEventListener('AddTranscript', (message) => {
-                        console.log('✅ Final transcript:', message);
-                        if (message.metadata?.transcript) {
+                        } else if (message.message === 'AddTranscript') {
                             this.displayTranscript(message.metadata.transcript, true);
+                        } else if (message.message === 'RecognitionStarted') {
+                            console.log('🎤 Recognition started!');
+                        } else if (message.message === 'Error') {
+                            console.error('❌ Error:', message);
+                            this.showError('Transcription error: ' + message.reason);
                         }
-                    });
-
-                    this.rtClient.addEventListener('RecognitionStarted', () => {
-                        console.log('🎤 Recognition started!');
-                    });
-
-                    this.rtClient.addEventListener('Error', (error) => {
-                        console.error('❌ Transcription error:', error);
-                        console.error('Error details:', JSON.stringify(error, null, 2));
-                        this.showError('Transcription error: ' + (error.reason || error.message || 'Unknown error'));
-                    });
-
-                    this.rtClient.addEventListener('EndOfTranscript', () => {
-                        console.log('🏁 End of transcript');
-                    });
+                    };
                     
-                    this.rtClient.addEventListener('AudioAdded', () => {
-                        console.log('🔊 Audio added to buffer');
-                    });
+                    this.ws.onerror = (error) => {
+                        console.error('❌ WebSocket error:', error);
+                        this.showError('Connection error');
+                    };
                     
-                    console.log('Event listeners configured');
-                }
-
-                displayTranscript(text, isFinal) {
-                    if (!text) return;
-
-                    const placeholder = this.transcriptionDiv.querySelector('.placeholder');
-                    if (placeholder) {
-                        placeholder.remove();
-                    }
-
-                    const lastItem = this.transcriptionDiv.lastElementChild;
-                    
-                    if (isFinal) {
-                        const item = document.createElement('div');
-                        item.className = 'transcript-item final';
-                        item.textContent = text;
-                        this.transcriptionDiv.appendChild(item);
-                        
-                        if (lastItem && lastItem.classList.contains('partial')) {
-                            lastItem.remove();
+                    this.ws.onclose = () => {
+                        console.log('🔌 WebSocket closed');
+                        if (this.isRecording) {
+                            this.stop();
                         }
-                    } else {
-                        if (lastItem && lastItem.classList.contains('partial')) {
-                            lastItem.textContent = text;
-                        } else {
-                            const item = document.createElement('div');
-                            item.className = 'transcript-item partial';
-                            item.textContent = text;
-                            this.transcriptionDiv.appendChild(item);
-                        }
-                    }
+                    };
 
-                    if (this.autoScrollCheckbox.checked) {
-                        this.transcriptionDiv.scrollTop = this.transcriptionDiv.scrollHeight;
-                    }
-                }
-
-                async stop() {
-                    this.isRecording = false;
+                } catch (error) {
+                    console.error('❌ Error starting transcription:', error);
                     
-                    if (this.rtClient) {
-                        try {
-                            await this.rtClient.stop();
-                        } catch (error) {
-                            console.error('Error stopping client:', error);
-                        }
-                        this.rtClient = null;
+                    let errorMessage = 'Failed to start: ' + error.message;
+                    
+                    if (error.name === 'NotFoundError') {
+                        errorMessage = 'No microphone found.';
+                    } else if (error.name === 'NotAllowedError') {
+                        errorMessage = 'Microphone access denied.';
                     }
-
+                    
+                    this.showError(errorMessage);
                     this.cleanup();
-                    this.updateStatus('ready', 'Ready');
+                    this.updateStatus('error', 'Error');
                     this.startBtn.disabled = false;
                     this.stopBtn.disabled = true;
                 }
+            }
 
-                cleanup() {
-                    if (this.durationInterval) {
-                        clearInterval(this.durationInterval);
-                        this.durationInterval = null;
+            startAudioProcessing(sampleRate) {
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+                const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+                
+                // Use ScriptProcessorNode for compatibility
+                const bufferSize = 4096;
+                this.processor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+                
+                this.processor.onaudioprocess = (e) => {
+                    if (!this.isRecording || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                        return;
                     }
-                    this.isRecording = false;
-                }
 
-                clearTranscription() {
-                    this.transcriptionDiv.innerHTML = '<p class="placeholder">Your transcription will appear here...</p>';
-                }
-
-                updateStatus(status, text) {
-                    this.statusIndicator.className = 'status-indicator ' + status;
-                    this.statusText.textContent = text;
-                }
-
-                updateDuration() {
-                    if (!this.startTime) return;
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const audioBytes = new Int8Array(inputData.buffer);
                     
-                    const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
-                    const minutes = Math.floor(elapsed / 60);
-                    const seconds = elapsed % 60;
-                    this.durationSpan.textContent = 
-                        `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                    const audioMessage = {
+                        message: 'AddAudio',
+                        seq_no: this.seqNo++,
+                        audio: this.arrayBufferToBase64(audioBytes.buffer)
+                    };
+                    
+                    this.ws.send(JSON.stringify(audioMessage));
+                };
+
+                source.connect(this.processor);
+                this.processor.connect(this.audioContext.destination);
+                console.log('🔊 Audio processing started');
+            }
+
+            arrayBufferToBase64(buffer) {
+                let binary = '';
+                const bytes = new Uint8Array(buffer);
+                for (let i = 0; i < bytes.byteLength; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                return btoa(binary);
+            }
+
+            displayTranscript(text, isFinal) {
+                if (!text) return;
+
+                const placeholder = this.transcriptionDiv.querySelector('.placeholder');
+                if (placeholder) {
+                    placeholder.remove();
                 }
 
-                showError(message) {
-                    this.errorDiv.textContent = message;
-                    this.errorDiv.style.display = 'block';
+                const lastItem = this.transcriptionDiv.lastElementChild;
+                
+                if (isFinal) {
+                    const item = document.createElement('div');
+                    item.className = 'transcript-item final';
+                    item.textContent = text;
+                    this.transcriptionDiv.appendChild(item);
+                    
+                    if (lastItem && lastItem.classList.contains('partial')) {
+                        lastItem.remove();
+                    }
+                } else {
+                    if (lastItem && lastItem.classList.contains('partial')) {
+                        lastItem.textContent = text;
+                    } else {
+                        const item = document.createElement('div');
+                        item.className = 'transcript-item partial';
+                        item.textContent = text;
+                        this.transcriptionDiv.appendChild(item);
+                    }
                 }
 
-                hideError() {
-                    this.errorDiv.style.display = 'none';
+                if (this.autoScrollCheckbox.checked) {
+                    this.transcriptionDiv.scrollTop = this.transcriptionDiv.scrollHeight;
                 }
             }
-            
-            console.log('Initializing Live Transcription app...');
+
+            stop() {
+                console.log('⏹ Stopping transcription...');
+                this.isRecording = false;
+                
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    const endMessage = {
+                        message: 'EndOfStream',
+                        last_seq_no: this.seqNo
+                    };
+                    this.ws.send(JSON.stringify(endMessage));
+                    setTimeout(() => this.ws.close(), 1000);
+                }
+
+                this.cleanup();
+                this.updateStatus('ready', 'Ready');
+                this.startBtn.disabled = false;
+                this.stopBtn.disabled = true;
+            }
+
+            cleanup() {
+                if (this.durationInterval) {
+                    clearInterval(this.durationInterval);
+                    this.durationInterval = null;
+                }
+
+                if (this.processor) {
+                    this.processor.disconnect();
+                    this.processor = null;
+                }
+
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(track => track.stop());
+                    this.mediaStream = null;
+                }
+
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
+                }
+
+                this.isRecording = false;
+                this.seqNo = 0;
+            }
+
+            clearTranscription() {
+                this.transcriptionDiv.innerHTML = '<p class="placeholder">Your transcription will appear here...</p>';
+            }
+
+            updateStatus(status, text) {
+                this.statusIndicator.className = 'status-indicator ' + status;
+                this.statusText.textContent = text;
+            }
+
+            updateDuration() {
+                if (!this.startTime) return;
+                
+                const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = elapsed % 60;
+                this.durationSpan.textContent = 
+                    `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+
+            showError(message) {
+                this.errorDiv.textContent = message;
+                this.errorDiv.style.display = 'block';
+            }
+
+            hideError() {
+                this.errorDiv.style.display = 'none';
+            }
+        }
+
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => new LiveTranscription());
+        } else {
             new LiveTranscription();
         }
     </script>
